@@ -8,6 +8,90 @@ def antisymmetric_projection(d):
     P = (1 / np.sqrt(2)) * np.vstack([np.kron(I_d[i], I_d[j]) - np.kron(I_d[j], I_d[i]) for i in range(d) for j in range(i + 1, d)])
     return P.T
 
+def C_optimal_design(phis, type='S'):
+    d = phis[0].shape[0]
+    K = len(phis)
+    P = antisymmetric_projection(d)
+
+    S_design = type == 'S'
+
+    # cvxpy Variables
+    if S_design:
+        d_ = d*(d-1)//2
+        pi = cp.Variable(K*(K-1)//2, nonneg=True)
+    else:
+        d_ = d**2
+        pi = cp.Variable(K**2, nonneg=True)
+    Y = cp.Variable((d_, d_), symmetric=True)  # for Schur complement
+
+    # stack Kroneckers
+    if S_design:
+        X = np.vstack([np.kron(phis[j], phis[i]) for i in range(K) for j in range(i+1,K)])
+    else:
+        X = np.vstack([np.kron(phis[j], phis[i]) for i in range(K) for j in range(K)])
+
+    V_pi = X.T @ cp.diag(pi) @ X
+    if S_design:
+        V_pi = P.T @ V_pi @ P
+        V_inv = P @ Y @ P.T
+    else:
+        V_inv = Y
+
+
+    # objective function
+    D_col = cp.Constant(np.zeros((d, d)))
+    for m in range(d):
+        idx_set = [m*d + i for i in range(d)]
+        D_col = D_col + V_inv[np.ix_(idx_set, idx_set)]
+
+    if S_design:
+        objective = cp.Minimize(cp.lambda_max(D_col))
+    else:
+        D_row = cp.Constant(np.zeros((d, d)))
+        for m in range(d):
+            idx_set = [m + i*d for i in range(d)]
+            D_row = D_row + V_inv[np.ix_(idx_set, idx_set)]
+        objective = cp.Minimize(cp.maximum(cp.lambda_max(D_col), cp.lambda_max(D_row)))
+
+    prob = cp.Problem(objective, [cp.sum(pi) == 1, cp.bmat([[V_pi, np.eye(d_)], [np.eye(d_), Y]]) >> 0])
+    try:
+        prob.solve(solver=cp.MOSEK)
+    except:
+        print(f"Solver status for {type}-design (d={d}):", prob.status)
+        prob.solve(solver=cp.MOSEK, verbose=True)
+        # if prob.status != cp.OPTIMAL:
+        #     print(f"Solver status for {type}-design (d={d}):", prob.status)
+            # return None
+    # print(f"Solver status for {type}-design (d={d}):", prob.status)
+    # print(f"Optimal value for {type}-design:", prob.value)
+    # print(f"Solver tolerance for {type}-design:", prob.solver_stats.solve_time)
+    pi_optimal = pi.value
+    pi_optimal /= np.sum(pi_optimal)
+
+    V_pi = X.T @ np.diag(pi_optimal) @ X
+    if S_design:
+        V_inv = P @ np.linalg.inv(P.T @ V_pi @ P) @ P.T
+    else:
+        V_inv = np.linalg.inv(V_pi)
+
+    # objective function
+    D_col = np.zeros((d, d))
+    for m in range(d):
+        idx_set = [m * d + i for i in range(d)]
+        D_col = D_col + V_inv[np.ix_(idx_set, idx_set)]
+    eig_max1 = np.max(np.linalg.eigvals(D_col))
+
+    if S_design:
+        return pi_optimal, eig_max1
+    else:
+        D_row = np.zeros((d, d))
+        for m in range(d):
+            idx_set = [m + i * d for i in range(d)]
+            D_row = D_row + V_inv[np.ix_(idx_set, idx_set)]
+        eig_max2 = np.max(np.linalg.eigvals(D_row))
+        # print(eig_max1, eig_max2)
+        return pi_optimal, max(eig_max1, eig_max2)
+
 def optimal_design(phis, type='S'):
     d = phis[0].shape[0]
     K = len(phis)
