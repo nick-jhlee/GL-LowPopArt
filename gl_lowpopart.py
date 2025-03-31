@@ -79,17 +79,16 @@ def nuc_norm_MLE(env, N1, d1, d2, nuc_coef):
 
     Theta0 = np.array(Theta.value)
 
-    return Theta0
+    return Theta0, X1, y1
 
 
-def GL_LowPopArt(env, N2, d1, d2, delta, Theta0, c_nu=1):
+def GL_LowPopArt(env, N2, d1, d2, delta, Theta0, X1, y1, c_nu=1):
     X_arms = env.X_arms
     K = env.K
     arm_set = env.arm_set
     
     theta0 = Theta0.flatten()
-    # Theta0 = env.Theta_star
-    # theta0 = Theta0.flatten()
+    # theta_star = env.Theta_star.flatten()
 
     mu_diags = np.diag([dmu(tmp) for tmp in X_arms @ theta0])
     mu_diags = np.ascontiguousarray(mu_diags, dtype=np.float64)

@@ -1,5 +1,6 @@
 from gl_lowpopart import *
 from tqdm import tqdm
+from math import floor
 
 
 def create_random_env(Theta_star, K):
@@ -58,11 +59,11 @@ if __name__ == '__main__':
     env = OneBitCompletion(arm_set, Theta_star)
 
     num_repeats = 5
-    delta = 0.01
+    delta = 0.001
     # Ns = [100, 1000, 10000, 100000]
-    Ns = [100, 500, 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000]
-    c_lambda = 0.01
-    c_nu = 1e3 # scaling for nu in Stage II Catoni
+    Ns = [1000, 5000, 10000, 50000, 100000, 500000]
+    c_lambda = 0.001
+    c_nu = 1e2 # scaling for nu in Stage II Catoni
     
     errors0_all = []
     errors_all = []
@@ -71,14 +72,17 @@ if __name__ == '__main__':
         errors_reps = []
         for _ in range(num_repeats):
             # Stage I. Nuclear norm regularized MLE
-            nuc_coef = np.sqrt(2 * np.log((d + d) / delta) / N) * c_lambda
-            Theta0 = nuc_norm_MLE(env, N, d, d, nuc_coef)
+            nuc_coef = np.sqrt(np.log((d + d) / delta) / N) * c_lambda
+            Theta0, _, _ = nuc_norm_MLE(env, N, d, d, nuc_coef)
             errors0_reps.append(np.linalg.norm(Theta0 - Theta_star))
 
             # Stage II. matrix Catoni
             # for fair comparison, we use N/2 samples for Stage I and II
-            Theta0 = nuc_norm_MLE(env, N // 2, d, d, nuc_coef)
-            Theta = GL_LowPopArt(env, N // 2, d, d, delta, Theta0, c_nu)
+            N1 = 2 * floor(np.sqrt(N))
+            N2 = N - N1
+            nuc_coef = np.sqrt(np.log((d + d) / delta) / N1) * c_lambda
+            Theta0, X1, y1 = nuc_norm_MLE(env, N1, d, d, nuc_coef)
+            Theta = GL_LowPopArt(env, N2, d, d, delta, Theta0, X1, y1, c_nu)
             errors_reps.append(np.linalg.norm(Theta - Theta_star))
         errors0_all.append(errors0_reps)
         errors_all.append(errors_reps)
@@ -93,8 +97,8 @@ if __name__ == '__main__':
     plt.figure(1)
     plt.errorbar(Ns, errors0_mean, yerr=errors0_std, fmt='o-', label='Stage I', color='blue', capsize=5)
     plt.errorbar(Ns, errors_mean, yerr=errors_std, fmt='o-', label='Stage I + II', color='orange', capsize=5)
-    plt.xscale('log')
-    plt.yscale('log')
+    # plt.xscale('log')
+    # plt.yscale('log')
     plt.xlabel('N')
     plt.ylabel('Spectral norm error')
     plt.legend()
