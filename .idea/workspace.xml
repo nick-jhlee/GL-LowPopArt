@@ -5,6 +5,7 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="2f7ef2d2-f7a9-401d-893b-1da37d417c6e" name="Changes" comment="">
+      <change afterPath="$PROJECT_DIR$/.idea/other.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/gl_lowpopart.py" beforeDir="false" afterPath="$PROJECT_DIR$/gl_lowpopart.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/onebit.py" beforeDir="false" afterPath="$PROJECT_DIR$/onebit.py" afterDir="false" />
@@ -137,7 +138,7 @@
       <workItem from="1737086033609" duration="20815000" />
       <workItem from="1737112522479" duration="10458000" />
       <workItem from="1743435819382" duration="33000" />
-      <workItem from="1743435862071" duration="3153000" />
+      <workItem from="1743435862071" duration="3275000" />
     </task>
     <servers />
   </component>

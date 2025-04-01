@@ -1,4 +1,6 @@
 import numpy as np
+import cvxpy as cp
+import matplotlib.pyplot as plt
 
 
 def sigmoid(x):
@@ -6,7 +8,7 @@ def sigmoid(x):
   y = 1 / (1 + np.exp(- x))
   return y
 
-def dmu(x):
+def dsigmoid(x):
     return sigmoid(x) * (1 - sigmoid(x))
 
 # Catoni-style truncation of the spectrum
@@ -28,3 +30,27 @@ def psi_nu(A, nu):
     D = np.diag([psi(nu * d) for d in D])
     tmp = (1 / nu) * V @ D @ V.T
     return tmp[:d1, d1:d1+d2]
+
+
+def E_optimal_design(env):
+    """
+    E-optimal design
+    """
+    X_arms = env.X_arms
+    K = env.K
+
+    # E-optimal design
+    pi_E = cp.Variable(K, nonneg=True)
+    constraints = [cp.sum(pi_E) == 1]
+    V_pi = X_arms.T @ cp.diag(pi_E) @ X_arms
+    objective_E = cp.Maximize(cp.lambda_min(V_pi))
+    prob_E = cp.Problem(objective_E, constraints)
+    try:
+        prob_E.solve(solver=cp.MOSEK)
+    except:
+        print("Solver status for E-optimal design:", prob_E.status)
+        prob_E.solve(solver=cp.MOSEK, verbose=True)
+    pi_E = np.abs(np.array(pi_E.value))
+    pi_E /= np.sum(pi_E)
+
+    return pi_E

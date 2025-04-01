@@ -1,11 +1,13 @@
 from utils import *
+import matplotlib.pyplot as plt
 
-class OneBitCompletion:
-    def __init__(self, arm_set, Theta_star):
+class LinearCompletion:
+    def __init__(self, arm_set, Theta_star, sigma=1):
         self.arm_set = arm_set
         self.Theta_star = Theta_star
         self.d1 = Theta_star.shape[0]
         self.d2 = Theta_star.shape[1]
+        self.sigma = sigma
 
         self.K = len(arm_set)
         self.X_arms = np.ascontiguousarray(np.concatenate([arm.flatten('F').reshape(1,-1) for arm in arm_set], axis=0), dtype=np.float64)
@@ -15,14 +17,14 @@ class OneBitCompletion:
         Simulate the reward for a given arm.
         The reward is generated based on the inner product of the arm and the true parameter matrix.
         """
-        return np.random.binomial(1, sigmoid(np.vdot(arm, self.Theta_star)))
+        eps = np.random.randn() * self.sigma
+        return np.vdot(arm, self.Theta_star) + eps
 
 
 
-
-def nuc_norm_MLE(env, N1, d1, d2, nuc_coef):
+def nuc_norm_MLE_linear(env, N1, d1, d2, nuc_coef):
     """
-    Nuclear norm MLE for the GL-LowPopArt algorithm, with E-optimal design
+    Nuclear norm MLE for the linear matrix recovery, with E-optimal design
     """
     K = env.K
     arm_set = env.arm_set
@@ -41,10 +43,10 @@ def nuc_norm_MLE(env, N1, d1, d2, nuc_coef):
     
     # Nuclear norm regularized MLE
     Theta = cp.Variable((d1, d2))
-    theta = cp.vec(Theta)
+    theta = cp.vec(Theta, 'F')  # column major vectoriation
 
-    log_likelihood = cp.sum(cp.multiply(y1, X1 @ theta) - cp.logistic(X1 @ theta)) / N1
-    objective = cp.Maximize(log_likelihood - nuc_coef * cp.normNuc(Theta))
+    l2_loss = cp.sum_squares(y1 - X1 @ theta) / N1
+    objective = cp.Minimize(l2_loss + nuc_coef * cp.normNuc(Theta))
     prob = cp.Problem(objective)
     try:
         prob.solve(solver=cp.MOSEK)
@@ -54,41 +56,41 @@ def nuc_norm_MLE(env, N1, d1, d2, nuc_coef):
 
     Theta0 = np.array(Theta.value)
 
-    return Theta0, X1, y1
+    return Theta0
 
 
-def GL_LowPopArt(env, N2, d1, d2, delta, Theta0, c_nu=1):
+def LowPopArt(env, N2, d1, d2, delta, Theta0):
+    """
+    Jang et al. (ICML 2024)
+    """
     X_arms = env.X_arms
     K = env.K
     arm_set = env.arm_set
     
     theta0 = Theta0.flatten('F')
-
-    mu_diags = np.diag([dsigmoid(tmp) for tmp in X_arms @ theta0])
-    mu_diags = np.ascontiguousarray(mu_diags, dtype=np.float64)
+    # theta_star = env.Theta_star.flatten('F')
 
     # Stage II. Catoni Style
     ## Experimental Design
     pi = cp.Variable(K, nonneg=True)
     d_ = d1 * d2
 
-    mu_diags_cp = cp.Constant(mu_diags)
-    H_pi = X_arms.T @ cp.diag(pi) @ mu_diags_cp @ X_arms
-    H_inv = cp.Variable((d_, d_), PSD=True)  # for Schur complement & epigraph formulation
+    V_pi = X_arms.T @ cp.diag(pi) @ X_arms
+    V_inv = cp.Variable((d_, d_), PSD=True)  # for Schur complement & epigraph formulation
     
     # objective function
     D_col = cp.Constant(np.zeros((d2, d2)))
     for m in range(d1):
         idx_set = [m*d1 + i for i in range(d1)]
-        D_col = D_col + H_inv[np.ix_(idx_set, idx_set)]
+        D_col = D_col + V_inv[np.ix_(idx_set, idx_set)]
 
     D_row = cp.Constant(np.zeros((d1, d1)))
     for m in range(d2):
         idx_set = [m + l*d1 for l in range(d2)]
-        D_row = D_row + H_inv[np.ix_(idx_set, idx_set)]
+        D_row = D_row + V_inv[np.ix_(idx_set, idx_set)]
     
     objective = cp.Minimize(cp.maximum(cp.lambda_max(D_col), cp.lambda_max(D_row)))
-    prob = cp.Problem(objective, [cp.sum(pi) == 1, cp.bmat([[H_pi, np.eye(d_)], [np.eye(d_), H_inv]]) >> 0])
+    prob = cp.Problem(objective, [cp.sum(pi) == 1, cp.bmat([[V_pi, np.eye(d_)], [np.eye(d_), V_inv]]) >> 0])
     try:
         prob.solve(solver=cp.MOSEK)
     except:
@@ -103,7 +105,7 @@ def GL_LowPopArt(env, N2, d1, d2, delta, Theta0, c_nu=1):
     pi_optimal = np.abs(np.array(pi.value))
     pi_optimal /= np.sum(pi_optimal)
     design_value = prob.value
-    H_inv_optimal = np.linalg.inv(X_arms.T @ np.diag(pi_optimal) @ mu_diags @ X_arms)
+    V_inv_optimal = np.linalg.inv(X_arms.T @ np.diag(pi_optimal) @ X_arms)
 
     ## Sample from pi_optimal
     X2, y2 = np.zeros((N2, d_)), np.zeros(N2)
@@ -114,16 +116,18 @@ def GL_LowPopArt(env, N2, d1, d2, delta, Theta0, c_nu=1):
         y2[i] = env.get_reward(arm)
     
     ## matrix Catoni
+    R0 = 2
+    d = max(d1, d2)
     # print("Design value:", design_value)
-    nu = c_nu * 2 * np.sqrt(np.log(4*(d1 + d2) / delta) / (design_value * N2))
+    nu = (1 / (R0 + env.sigma)) * np.sqrt(2 * np.log(2*d / delta) / (design_value * N2))
+    # print("nu:", nu)
 
     Theta_Catoni = np.zeros((d1, d2))
     for t, y in enumerate(y2):
         x = X2[t].reshape((d_, 1))
 
         # one-sample estimator
-        # vector_one_sample = (y - sigmoid(np.sum(theta0 * x))) * H_inv_optimal @ x
-        vector_one_sample = (y - sigmoid(np.dot(theta0, x))) * H_inv_optimal @ x
+        vector_one_sample = (y - np.dot(theta0, x)) * V_inv_optimal @ x
         matrix_one_sample = np.reshape(vector_one_sample, (d1, d2), 'F')
 
         # matrix Catoni estimator
@@ -134,7 +138,7 @@ def GL_LowPopArt(env, N2, d1, d2, delta, Theta0, c_nu=1):
 
     # Truncation
     U, S, Vt = np.linalg.svd(Theta_Catoni)
-    tau = np.sqrt(16 * design_value * np.log(4*(d1 + d2) / delta) / (c_nu * N2))
+    tau = 2 * (R0 + env.sigma) * np.sqrt(design_value * np.log(2*d / delta) / N2)
     S_truncated = S * (S > tau).astype(int)
     # print(S_truncated)
     return U @ np.diag(S_truncated) @ Vt
