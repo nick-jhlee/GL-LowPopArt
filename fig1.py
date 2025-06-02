@@ -97,13 +97,20 @@ def run_experiment(mode, d1, d2, r, K, num_repeats, delta, Ns, c_lambda, c_nu, R
                 current_results = json.load(f)
                 if len(current_results['BMF']['mean']) > Ns.index(N):
                     logger.info(f"Loading existing results for N={N}")
-                    errors_bmf_reps = current_results['BMF']['raw'][str(N)]
-                    errors_stage1_no_e_reps = current_results['Stage I (no E-optimal)']['raw'][str(N)]
-                    errors_stage1_with_e_reps = current_results['Stage I (with E-optimal)']['raw'][str(N)]
-                    errors_stage12_no_e_no_gl_reps = current_results['Stage I+II (no E, no GL)']['raw'][str(N)]
-                    errors_stage12_no_e_with_gl_reps = current_results['Stage I+II (no E, with GL)']['raw'][str(N)]
-                    errors_stage12_with_e_no_gl_reps = current_results['Stage I+II (with E, no GL)']['raw'][str(N)]
-                    errors_stage12_with_e_with_gl_reps = current_results['Stage I+II (with E, with GL)']['raw'][str(N)]
+                    # Handle both old and new result formats
+                    if 'raw' in current_results['BMF']:
+                        # New format with raw data
+                        errors_bmf_reps = current_results['BMF']['raw'][str(N)]
+                        errors_stage1_no_e_reps = current_results['Stage I (no E-optimal)']['raw'][str(N)]
+                        errors_stage1_with_e_reps = current_results['Stage I (with E-optimal)']['raw'][str(N)]
+                        errors_stage12_no_e_no_gl_reps = current_results['Stage I+II (no E, no GL)']['raw'][str(N)]
+                        errors_stage12_no_e_with_gl_reps = current_results['Stage I+II (no E, with GL)']['raw'][str(N)]
+                        errors_stage12_with_e_no_gl_reps = current_results['Stage I+II (with E, no GL)']['raw'][str(N)]
+                        errors_stage12_with_e_with_gl_reps = current_results['Stage I+II (with E, with GL)']['raw'][str(N)]
+                    else:
+                        # Old format - we'll need to run the experiment again
+                        logger.info("Found old format results - will run experiment again")
+                        continue
                     
                     # Store results for this N
                     errors_bmf_all.append(errors_bmf_reps)
