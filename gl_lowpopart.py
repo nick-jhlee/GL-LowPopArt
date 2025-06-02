@@ -1,9 +1,15 @@
 from utils import *
 import warnings
 import functools
+import mosek
 
 # Suppress MOSEK warnings
 warnings.filterwarnings('ignore', category=UserWarning, module='mosek')
+warnings.filterwarnings('ignore', category=UserWarning, module='cvxpy')
+
+mosek_env = mosek.Env()
+mosek_env.putlicensepath("../mosek/mosek.lic")
+
 
 @functools.lru_cache(maxsize=128)
 def dsigmoid(x):
