@@ -1,4 +1,6 @@
 from utils import *
+import numpy as np
+import logging
 
 def loss(U, X1, y1):
     """
@@ -34,31 +36,22 @@ def Burer_Monteiro(d, r, X1, y1, lr=3e-1, grad_tol=1e-6, max_iter=1e4):
     # Small initialization for U (see Stoger & Soltanolkotabi (2021) and Chung & Kim (2023), although their theory is for linear matrix recovery)
     U = 1e-3 * np.random.randn(d, r)
     iter = 0
-    # prev_loss = loss(U, X1, y1)
     grad_norms = [grad_norm(U, X1, y1)]
+    
     while grad_norm(U, X1, y1) > grad_tol:
         # Gradient descent update
         U -= grad(U, X1, y1) * lr
         iter += 1
 
-        # Compute the loss and gradient norm
-        current_loss = loss(U, X1, y1)
+        # Compute the gradient norm
         current_grad_norm = grad_norm(U, X1, y1)
         grad_norms.append(current_grad_norm)
-        # # Check for convergence or stagnation
-        # current_loss = loss(U, X1, y1)
-        # if abs(prev_loss - current_loss) < 1e-8:  # Stagnation threshold
-        #     print(f"Converged: Loss change below threshold at iteration {iter}.")
-        #     break
-        # prev_loss = current_loss
 
         if iter > max_iter:
-            print("Burer-Monteiro did not converge within max_iter.")
+            logging.warning("Burer-Monteiro did not converge within max_iter")
             break
     
-    # print(f"Burer-Monteiro converged in {iter} iterations.", grad_norm(U, X1, y1))
-
-    # plt.plot(grad_norms)
-    # plt.show()
-
     return U @ U.T
+
+def sigmoid(x):
+    return 1 / (1 + np.exp(-x))

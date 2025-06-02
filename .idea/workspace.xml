@@ -5,9 +5,9 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="2f7ef2d2-f7a9-401d-893b-1da37d417c6e" name="Changes" comment="">
-      <change afterPath="$PROJECT_DIR$/.idea/other.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/GLS2-LowPopArt.iml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/GLS2-LowPopArt.iml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/gl_lowpopart.py" beforeDir="false" afterPath="$PROJECT_DIR$/gl_lowpopart.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/deprecated/gls2-lowpopart.py" beforeDir="false" />
       <change beforePath="$PROJECT_DIR$/onebit.py" beforeDir="false" afterPath="$PROJECT_DIR$/onebit.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
@@ -31,17 +31,16 @@
     &quot;assignee&quot;: &quot;nick-jhlee&quot;
   }
 }</component>
-  <component name="GithubPullRequestsUISettings">{
-  &quot;selectedUrlAndAccountId&quot;: {
-    &quot;url&quot;: &quot;https://github.com/nick-jhlee/GLS2-LowPopArt&quot;,
-    &quot;accountId&quot;: &quot;bb6d62dc-7762-4e22-b5cf-a1b4fb254a28&quot;
+  <component name="GithubPullRequestsUISettings"><![CDATA[{
+  "selectedUrlAndAccountId": {
+    "url": "https://github.com/nick-jhlee/GL-LowPopArt",
+    "accountId": "ebc80faf-0856-4cf2-acd8-89710d5b1d41"
   }
-}</component>
+}]]></component>
   <component name="ProjectColorInfo">{
   &quot;associatedIndex&quot;: 5
 }</component>
   <component name="ProjectId" id="2rjwu5uopgGDaLMb5LwvQ0RmTZo" />
-  <component name="ProjectLevelVcsManager" settingsEditedManually="true" />
   <component name="ProjectViewState">
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
@@ -54,7 +53,7 @@
     "RunOnceActivity.git.unshallow": "true",
     "SHARE_PROJECT_CONFIGURATION_FILES": "true",
     "git-widget-placeholder": "master",
-    "last_opened_file_path": "/Users/junghyun/GL-LowPopArt",
+    "last_opened_file_path": "/Users/junghyunl/GL-LowPopArt",
     "node.js.detected.package.eslint": "true",
     "node.js.detected.package.tslint": "true",
     "node.js.selected.package.eslint": "(autodetect)",
@@ -121,8 +120,8 @@
   <component name="SharedIndexes">
     <attachedChunks>
       <set>
-        <option value="bundled-js-predefined-d6986cc7102b-1632447f56bf-JavaScript-PY-243.26053.29" />
-        <option value="bundled-python-sdk-b1dbf8ef85a6-4df51de95216-com.jetbrains.pycharm.pro.sharedIndexes.bundled-PY-243.26053.29" />
+        <option value="bundled-js-predefined-d6986cc7102b-6a121458b545-JavaScript-PY-251.25410.159" />
+        <option value="bundled-python-sdk-e0ed3721d81e-36ea0e71a18c-com.jetbrains.pycharm.pro.sharedIndexes.bundled-PY-251.25410.159" />
       </set>
     </attachedChunks>
   </component>
@@ -139,6 +138,7 @@
       <workItem from="1737112522479" duration="10458000" />
       <workItem from="1743435819382" duration="33000" />
       <workItem from="1743435862071" duration="3275000" />
+      <workItem from="1748819185334" duration="608000" />
     </task>
     <servers />
   </component>

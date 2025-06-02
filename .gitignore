@@ -1,0 +1,11 @@
+problem_instances/
+results/
+logs/
+*.pyc
+*.pyo
+*.pyd
+*.pyw
+*.pyz
+*.pywz
+*.pyzw
+*.pyzwz
