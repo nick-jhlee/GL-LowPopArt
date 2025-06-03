@@ -29,12 +29,12 @@ def grad_norm(U, X1, y1):
     """
     return np.linalg.norm(grad(U, X1, y1))
 
-def Burer_Monteiro(d, r, X1, y1, lr=3e-1, grad_tol=1e-6, max_iter=1e4):
+def Burer_Monteiro(d, r, X1, y1, lr=1e-2, grad_tol=1e-6, max_iter=1e4):
     """
     Perform Burer-Monteiro factorization to solve the low-rank matrix optimization problem.
     """
     # Small initialization for U (see Stoger & Soltanolkotabi (2021) and Chung & Kim (2023), although their theory is for linear matrix recovery)
-    U = 1e-3 * np.random.randn(d, r)
+    U = 1e-4 * np.random.randn(d, r)
     iter = 0
     grad_norms = [grad_norm(U, X1, y1)]
     

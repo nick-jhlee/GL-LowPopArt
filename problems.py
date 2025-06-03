@@ -16,7 +16,8 @@ class OneBitCompletion:
         self.d2 = Theta_star.shape[1]
 
         self.K = len(arm_set)
-        self.X_arms = np.array([arm.flatten('F') for arm in arm_set])
+        # self.X_arms = np.array([arm.flatten('F') for arm in arm_set])
+        self.X_arms = np.ascontiguousarray(np.concatenate([arm.flatten('F').reshape(1,-1) for arm in arm_set], axis=0), dtype=np.float64)
     
     def get_reward(self, arm):
         """
@@ -68,12 +69,22 @@ def load_problem_instance(mode, run_idx, save_dir=PROBLEM_INSTANCES_DIR):
         Tuple of (arm_set, Theta_star)
     """
     try:
-        filename = f'{save_dir}/{mode}_run{run_idx}_instance.h5'
-        with h5py.File(filename, 'r') as f:
+        # Load arm set
+        arm_set_file = os.path.join(save_dir, f'{mode}_arm_set.h5')
+        with h5py.File(arm_set_file, 'r') as f:
             arm_set_array = f['arm_set'][:]
+            # Get dimensions from metadata or calculate from Theta_star
+            theta_file = os.path.join(save_dir, f'{mode}_run{run_idx}_theta.h5')
+            with h5py.File(theta_file, 'r') as theta_f:
+                d1, d2 = theta_f['Theta_star'].shape
+            # Reshape each arm back to its original dimensions
+            arm_set = [arm.reshape((d1, d2), order='F') for arm in arm_set_array]
+        
+        # Load Theta_star
+        theta_file = os.path.join(save_dir, f'{mode}_run{run_idx}_theta.h5')
+        with h5py.File(theta_file, 'r') as f:
             Theta_star = f['Theta_star'][:]
-            # Reshape arm set back to original format
-            arm_set = [arm.reshape(Theta_star.shape, order='F') for arm in arm_set_array]
+        
         return arm_set, Theta_star
     except Exception as e:
         raise RuntimeError(f"Failed to load problem instance: {str(e)}")
@@ -145,14 +156,20 @@ def generate_Theta_star(d1, d2, r, rng=None, symmetric=True):
     U = rng.randn(d1, r)
     # QR decomposition to get orthogonal matrices
     U, _ = np.linalg.qr(U)
-    # Generate singular values
-    S = rng.rand(r)
-    S = S / np.max(S)  # Normalize
-    # Construct Theta_star
+    # # Generate singular values
+    # S = rng.rand(r)
+    # S = S / np.max(S)  # Normalize
+    # # Construct Theta_star
+    # if symmetric:
+    #     Theta_star = U @ np.diag(S) @ U.T
+    # else:
+    #     V = rng.randn(d2, r)
+    #     V, _ = np.linalg.qr(V)
+    #     Theta_star = U @ np.diag(S) @ V.T
     if symmetric:
-        Theta_star = U @ np.diag(S) @ U.T
+        Theta_star = U @ U.T
     else:
         V = rng.randn(d2, r)
         V, _ = np.linalg.qr(V)
-        Theta_star = U @ np.diag(S) @ V.T
-    return Theta_star
+        Theta_star = U @ V.T
+    return 2 * Theta_star

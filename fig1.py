@@ -22,6 +22,7 @@ from burer_monteiro import *
 from config import DEFAULT_PARAMS, PROBLEM_INSTANCES_DIR, RESULTS_DIR, setup_logging
 from gl_lowpopart import *
 from problems import *
+from utils import studentized_double_bootstrap
 
 def save_problem_instance(arm_set: List[np.ndarray], Theta_star: np.ndarray, mode: str, 
                          run_idx: int, save_dir: str = 'problem_instances', filename: str = None) -> None:
@@ -162,9 +163,9 @@ def run_single_repetition(args: Tuple[int, int, str, int, int, int, int, float, 
     env.Theta_star = Theta_star
 
     # Run all algorithms
-    nuc_coef = c_lambda * np.sqrt(8 * Rmax * np.log((d1 + d2) / delta) / N)
     
     # Stage I
+    nuc_coef = c_lambda * np.sqrt(8 * Rmax * np.log((d1 + d2) / delta) / N)
     error_stage1_no_e, X1, y1 = run_stage1(env, N, d1, d2, nuc_coef, False)
     error_stage1_with_e = run_stage1(env, N, d1, d2, nuc_coef, True)[0]
     
@@ -172,8 +173,10 @@ def run_single_repetition(args: Tuple[int, int, str, int, int, int, int, float, 
     error_bmf = run_bmf(env, d1, r, X1, y1)
     
     # Stage I+II
-    N1 = 2 * floor(np.sqrt(N))
+    # N1 = 2 * floor(np.sqrt(N))
+    N1 = N // 2
     N2 = N - N1
+    nuc_coef = c_lambda * np.sqrt(8 * Rmax * np.log((d1 + d2) / delta) / N1)
     error_stage12_no_e_no_gl = run_stage1_2(env, N1, N2, d1, d2, nuc_coef, c_nu, delta, False, False)
     error_stage12_no_e_with_gl = run_stage1_2(env, N1, N2, d1, d2, nuc_coef, c_nu, delta, False, True)
     error_stage12_with_e_no_gl = run_stage1_2(env, N1, N2, d1, d2, nuc_coef, c_nu, delta, True, False)
@@ -305,7 +308,9 @@ def run_experiment(mode: str, d1: int, d2: int, r: int, K: int, num_repeats: int
         # Run repeats in parallel
         try:
             # Use number of CPU cores minus 1 to leave one core free for system tasks
-            num_cores = min(num_repeats, max(1, mp.cpu_count() - 1))  # Use as many cores as repeats
+            # num_cores = min(num_repeats, max(1, mp.cpu_count() - 1))  # Use as many cores as repeats
+            num_cores = 50
+            # num_cores = 16   # use only 2 cores
             logger.info(f"Running {num_repeats} repeats in parallel using {num_cores} cores")
             
             with mp.Pool(processes=num_cores) as pool:
@@ -355,51 +360,44 @@ def run_experiment(mode: str, d1: int, d2: int, r: int, K: int, num_repeats: int
 
         # Log detailed results for this N
         logger.info(f"N={N} completed with {num_repeats} repeats")
-        logger.info(f"BMF mean error: {np.mean(errors_bmf_reps):.4f} ± {np.std(errors_bmf_reps):.4f}")
-        logger.info(f"Stage I (no E) mean error: {np.mean(errors_stage1_no_e_reps):.4f} ± {np.std(errors_stage1_no_e_reps):.4f}")
-        logger.info(f"Stage I (with E) mean error: {np.mean(errors_stage1_with_e_reps):.4f} ± {np.std(errors_stage1_with_e_reps):.4f}")
-        logger.info(f"Stage I+II (no E, no GL) mean error: {np.mean(errors_stage12_no_e_no_gl_reps):.4f} ± {np.std(errors_stage12_no_e_no_gl_reps):.4f}")
-        logger.info(f"Stage I+II (no E, with GL) mean error: {np.mean(errors_stage12_no_e_with_gl_reps):.4f} ± {np.std(errors_stage12_no_e_with_gl_reps):.4f}")
-        logger.info(f"Stage I+II (with E, no GL) mean error: {np.mean(errors_stage12_with_e_no_gl_reps):.4f} ± {np.std(errors_stage12_with_e_no_gl_reps):.4f}")
-        logger.info(f"Stage I+II (with E, with GL) mean error: {np.mean(errors_stage12_with_e_with_gl_reps):.4f} ± {np.std(errors_stage12_with_e_with_gl_reps):.4f}")
+        logger.info(f"BMF mean error: {np.mean(errors_bmf_reps):.4f}")
+        logger.info(f"Stage I (no E) mean error: {np.mean(errors_stage1_no_e_reps):.4f}")
+        logger.info(f"Stage I (with E) mean error: {np.mean(errors_stage1_with_e_reps):.4f}")
+        logger.info(f"Stage I+II (no E, no GL) mean error: {np.mean(errors_stage12_no_e_no_gl_reps):.4f}")
+        logger.info(f"Stage I+II (no E, with GL) mean error: {np.mean(errors_stage12_no_e_with_gl_reps):.4f}")
+        logger.info(f"Stage I+II (with E, no GL) mean error: {np.mean(errors_stage12_with_e_no_gl_reps):.4f}")
+        logger.info(f"Stage I+II (with E, with GL) mean error: {np.mean(errors_stage12_with_e_with_gl_reps):.4f}")
 
         # Save intermediate results
         try:
             current_results = {
                 'BMF': {
                     'mean': np.mean(errors_bmf_all, axis=1).tolist(),
-                    'std': np.std(errors_bmf_all, axis=1).tolist(),
-                    'raw': {str(N): errors_bmf_reps for N in Ns[:len(errors_bmf_all)]}
+                    'raw': {str(N): errors_bmf_all[i] for i, N in enumerate(Ns[:len(errors_bmf_all)])}
                 },
                 'Stage I (no E-optimal)': {
                     'mean': np.mean(errors_stage1_no_e_all, axis=1).tolist(),
-                    'std': np.std(errors_stage1_no_e_all, axis=1).tolist(),
-                    'raw': {str(N): errors_stage1_no_e_reps for N in Ns[:len(errors_stage1_no_e_all)]}
+                    'raw': {str(N): errors_stage1_no_e_all[i] for i, N in enumerate(Ns[:len(errors_stage1_no_e_all)])}
                 },
                 'Stage I (with E-optimal)': {
                     'mean': np.mean(errors_stage1_with_e_all, axis=1).tolist(),
-                    'std': np.std(errors_stage1_with_e_all, axis=1).tolist(),
-                    'raw': {str(N): errors_stage1_with_e_reps for N in Ns[:len(errors_stage1_with_e_all)]}
+                    'raw': {str(N): errors_stage1_with_e_all[i] for i, N in enumerate(Ns[:len(errors_stage1_with_e_all)])}
                 },
                 'Stage I+II (no E, no GL)': {
                     'mean': np.mean(errors_stage12_no_e_no_gl_all, axis=1).tolist(),
-                    'std': np.std(errors_stage12_no_e_no_gl_all, axis=1).tolist(),
-                    'raw': {str(N): errors_stage12_no_e_no_gl_reps for N in Ns[:len(errors_stage12_no_e_no_gl_all)]}
+                    'raw': {str(N): errors_stage12_no_e_no_gl_all[i] for i, N in enumerate(Ns[:len(errors_stage12_no_e_no_gl_all)])}
                 },
                 'Stage I+II (no E, with GL)': {
                     'mean': np.mean(errors_stage12_no_e_with_gl_all, axis=1).tolist(),
-                    'std': np.std(errors_stage12_no_e_with_gl_all, axis=1).tolist(),
-                    'raw': {str(N): errors_stage12_no_e_with_gl_reps for N in Ns[:len(errors_stage12_no_e_with_gl_all)]}
+                    'raw': {str(N): errors_stage12_no_e_with_gl_all[i] for i, N in enumerate(Ns[:len(errors_stage12_no_e_with_gl_all)])}
                 },
                 'Stage I+II (with E, no GL)': {
                     'mean': np.mean(errors_stage12_with_e_no_gl_all, axis=1).tolist(),
-                    'std': np.std(errors_stage12_with_e_no_gl_all, axis=1).tolist(),
-                    'raw': {str(N): errors_stage12_with_e_no_gl_reps for N in Ns[:len(errors_stage12_with_e_no_gl_all)]}
+                    'raw': {str(N): errors_stage12_with_e_no_gl_all[i] for i, N in enumerate(Ns[:len(errors_stage12_with_e_no_gl_all)])}
                 },
                 'Stage I+II (with E, with GL)': {
                     'mean': np.mean(errors_stage12_with_e_with_gl_all, axis=1).tolist(),
-                    'std': np.std(errors_stage12_with_e_with_gl_all, axis=1).tolist(),
-                    'raw': {str(N): errors_stage12_with_e_with_gl_reps for N in Ns[:len(errors_stage12_with_e_with_gl_all)]}
+                    'raw': {str(N): errors_stage12_with_e_with_gl_all[i] for i, N in enumerate(Ns[:len(errors_stage12_with_e_with_gl_all)])}
                 },
                 'metadata': {
                     'mode': mode,
@@ -434,7 +432,7 @@ def run_experiment(mode: str, d1: int, d2: int, r: int, K: int, num_repeats: int
 def save_results(all_errors: Tuple[List[List[float]], ...], Ns: List[int], 
                 mode: str, params: Dict[str, Any], logger: logging.Logger) -> None:
     """
-    Save results and generate plot.
+    Save results to JSON file.
     
     Args:
         all_errors: Tuple of error arrays for all algorithms
@@ -448,35 +446,43 @@ def save_results(all_errors: Tuple[List[List[float]], ...], Ns: List[int],
      errors_stage12_no_e_no_gl_all, errors_stage12_no_e_with_gl_all,
      errors_stage12_with_e_no_gl_all, errors_stage12_with_e_with_gl_all) = all_errors
 
-    # Compute mean and standard deviation for each algorithm
+    # Compute means and bootstrapped CIs for each algorithm
+    logger.info("Computing bootstrapped confidence intervals...")
     results = {
         'BMF': {
             'mean': np.mean(errors_bmf_all, axis=1).tolist(),
-            'std': np.std(errors_bmf_all, axis=1).tolist()
+            'ci': [studentized_double_bootstrap(errors_bmf_all[i]) for i in range(len(errors_bmf_all))],
+            'raw': {str(N): errors_bmf_all[i] for i, N in enumerate(Ns[:len(errors_bmf_all)])}
         },
         'Stage I (no E-optimal)': {
             'mean': np.mean(errors_stage1_no_e_all, axis=1).tolist(),
-            'std': np.std(errors_stage1_no_e_all, axis=1).tolist()
+            'ci': [studentized_double_bootstrap(errors_stage1_no_e_all[i]) for i in range(len(errors_stage1_no_e_all))],
+            'raw': {str(N): errors_stage1_no_e_all[i] for i, N in enumerate(Ns[:len(errors_stage1_no_e_all)])}
         },
         'Stage I (with E-optimal)': {
             'mean': np.mean(errors_stage1_with_e_all, axis=1).tolist(),
-            'std': np.std(errors_stage1_with_e_all, axis=1).tolist()
+            'ci': [studentized_double_bootstrap(errors_stage1_with_e_all[i]) for i in range(len(errors_stage1_with_e_all))],
+            'raw': {str(N): errors_stage1_with_e_all[i] for i, N in enumerate(Ns[:len(errors_stage1_with_e_all)])}
         },
         'Stage I+II (no E, no GL)': {
             'mean': np.mean(errors_stage12_no_e_no_gl_all, axis=1).tolist(),
-            'std': np.std(errors_stage12_no_e_no_gl_all, axis=1).tolist()
+            'ci': [studentized_double_bootstrap(errors_stage12_no_e_no_gl_all[i]) for i in range(len(errors_stage12_no_e_no_gl_all))],
+            'raw': {str(N): errors_stage12_no_e_no_gl_all[i] for i, N in enumerate(Ns[:len(errors_stage12_no_e_no_gl_all)])}
         },
         'Stage I+II (no E, with GL)': {
             'mean': np.mean(errors_stage12_no_e_with_gl_all, axis=1).tolist(),
-            'std': np.std(errors_stage12_no_e_with_gl_all, axis=1).tolist()
+            'ci': [studentized_double_bootstrap(errors_stage12_no_e_with_gl_all[i]) for i in range(len(errors_stage12_no_e_with_gl_all))],
+            'raw': {str(N): errors_stage12_no_e_with_gl_all[i] for i, N in enumerate(Ns[:len(errors_stage12_no_e_with_gl_all)])}
         },
         'Stage I+II (with E, no GL)': {
             'mean': np.mean(errors_stage12_with_e_no_gl_all, axis=1).tolist(),
-            'std': np.std(errors_stage12_with_e_no_gl_all, axis=1).tolist()
+            'ci': [studentized_double_bootstrap(errors_stage12_with_e_no_gl_all[i]) for i in range(len(errors_stage12_with_e_no_gl_all))],
+            'raw': {str(N): errors_stage12_with_e_no_gl_all[i] for i, N in enumerate(Ns[:len(errors_stage12_with_e_no_gl_all)])}
         },
         'Stage I+II (with E, with GL)': {
             'mean': np.mean(errors_stage12_with_e_with_gl_all, axis=1).tolist(),
-            'std': np.std(errors_stage12_with_e_with_gl_all, axis=1).tolist()
+            'ci': [studentized_double_bootstrap(errors_stage12_with_e_with_gl_all[i]) for i in range(len(errors_stage12_with_e_with_gl_all))],
+            'raw': {str(N): errors_stage12_with_e_with_gl_all[i] for i, N in enumerate(Ns[:len(errors_stage12_with_e_with_gl_all)])}
         }
     }
 
@@ -495,38 +501,8 @@ def save_results(all_errors: Tuple[List[List[float]], ...], Ns: List[int],
             json.dump(results, f, indent=2)
         
         logger.info(f"Results saved to {RESULTS_DIR}/Fig1_{mode}.json")
-
-        # Plot with error bars
-        plt.figure(1)
-        plt.errorbar(Ns, results['Stage I (no E-optimal)']['mean'], 
-                    yerr=results['Stage I (no E-optimal)']['std'], 
-                    fmt='o-', label='Stage I (no E-optimal)', color='blue', capsize=5)
-        plt.errorbar(Ns, results['Stage I (with E-optimal)']['mean'], 
-                    yerr=results['Stage I (with E-optimal)']['std'], 
-                    fmt='o-', label='Stage I (with E-optimal)', color='red', capsize=5)
-        plt.errorbar(Ns, results['Stage I+II (no E, no GL)']['mean'], 
-                    yerr=results['Stage I+II (no E, no GL)']['std'], 
-                    fmt='o-', label='Stage I+II (no E, no GL)', color='green', capsize=5)
-        plt.errorbar(Ns, results['Stage I+II (no E, with GL)']['mean'], 
-                    yerr=results['Stage I+II (no E, with GL)']['std'], 
-                    fmt='o-', label='Stage I+II (no E, with GL)', color='purple', capsize=5)
-        plt.errorbar(Ns, results['Stage I+II (with E, no GL)']['mean'], 
-                    yerr=results['Stage I+II (with E, no GL)']['std'], 
-                    fmt='o-', label='Stage I+II (with E, no GL)', color='orange', capsize=5)
-        plt.errorbar(Ns, results['Stage I+II (with E, with GL)']['mean'], 
-                    yerr=results['Stage I+II (with E, with GL)']['std'], 
-                    fmt='o-', label='Stage I+II (with E, with GL)', color='brown', capsize=5)
-        
-        plt.xlabel('N')
-        plt.ylabel('Nuclear norm error')
-        plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-        plt.title(f'1-Bit {mode.capitalize()} of {params["d1"]}x{params["d2"]} Rank-{params["r"]} Matrix')
-        plt.tight_layout()
-        plt.savefig(f'{RESULTS_DIR}/Fig1_{mode}.png', dpi=300, bbox_inches='tight')
-        logger.info(f"Plot saved to {RESULTS_DIR}/Fig1_{mode}.png")
-        plt.show()
     except Exception as e:
-        logger.error(f"Failed to save results or generate plot: {str(e)}")
+        logger.error(f"Failed to save results: {str(e)}")
 
 def main() -> None:
     """Main entry point for the experiment."""
@@ -541,7 +517,7 @@ def main() -> None:
     args = parser.parse_args()
 
     # Set up logging
-    logger = setup_logging(args.mode)
+    logger = setup_logging(args.mode, 'fig1')
     logger.info(f"Starting experiment with parameters: {args}")
 
     # Use default parameters from config

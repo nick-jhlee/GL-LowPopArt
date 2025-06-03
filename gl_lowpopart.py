@@ -1,6 +1,5 @@
 from utils import *
 import warnings
-import functools
 import mosek
 
 # Suppress MOSEK warnings
@@ -11,9 +10,28 @@ mosek_env = mosek.Env()
 mosek_env.putlicensepath("../mosek/mosek.lic")
 
 
-@functools.lru_cache(maxsize=128)
-def dsigmoid(x):
-    return np.exp(-x) / (1 + np.exp(-x))**2
+def E_optimal_design(env):
+    """
+    E-optimal design
+    """
+    X_arms = env.X_arms
+    K = env.K
+
+    # E-optimal design
+    pi_E = cp.Variable(K, nonneg=True)
+    constraints = [cp.sum(pi_E) == 1]
+    V_pi = X_arms.T @ cp.diag(pi_E) @ X_arms
+    objective_E = cp.Maximize(cp.lambda_min(V_pi))
+    prob_E = cp.Problem(objective_E, constraints)
+    try:
+        prob_E.solve(solver=cp.MOSEK)
+    except:
+        print("Solver status for E-optimal design:", prob_E.status)
+        prob_E.solve(solver=cp.MOSEK, verbose=True)
+    pi_E = np.abs(np.array(pi_E.value))
+    pi_E /= np.sum(pi_E)
+
+    return pi_E
 
 def nuc_norm_MLE(env, N1, d1, d2, nuc_coef, E_optimal=True):
     """
@@ -40,7 +58,7 @@ def nuc_norm_MLE(env, N1, d1, d2, nuc_coef, E_optimal=True):
     
     # Nuclear norm regularized MLE
     Theta = cp.Variable((d1, d2))
-    theta = cp.vec(Theta)
+    theta = cp.vec(Theta, order='F')
 
     log_likelihood = cp.sum(cp.multiply(y1, X1 @ theta) - cp.logistic(X1 @ theta)) / N1
     objective = cp.Maximize(log_likelihood - nuc_coef * cp.normNuc(Theta))
@@ -66,7 +84,7 @@ def GL_LowPopArt(env, N2, d1, d2, delta, Theta0, c_nu=1, GL_optimal=True):
 
     # Pre-compute constants
     log_factor = np.log(4*(d1 + d2) / delta)
-    nu_factor = c_nu * 2 * np.sqrt(log_factor)
+    nu_factor = c_nu * np.sqrt(log_factor)
     tau_factor = 4 * np.sqrt(log_factor)
 
     mu_diags = np.diag([dsigmoid(tmp) for tmp in X_arms @ theta0])

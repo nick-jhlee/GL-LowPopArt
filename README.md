@@ -33,17 +33,11 @@ to create a conda environment.
 # Reproducing Figure 1
 Run
 ```shell
-$ bash fig1.sh
+$ bash fig1.sh && python fig1_plot.py
 ```
 
 # Reproducing Figure 2
 Run
 ```shell
-$ bash fig2.sh
-```
-
-# Reproducing Figure 3
-Run
-```shell
-$ bash fig3.sh
+$ bash fig2.sh && python fig2_plot.py
 ```
