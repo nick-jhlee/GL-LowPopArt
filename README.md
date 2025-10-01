@@ -1,4 +1,4 @@
-Codes for the following paper: GL-LowPopArt: A Nearly Instance-Wise Minimax-Optimal Estimator for (Adaptive) Generalized Low-Rank Trace Regression.
+Codes for the following paper: GL-LowPopArt: A Nearly Instance-Wise Minimax-Optimal Estimator for Generalized Low-Rank Trace Regression.
 
 # Before Running
 You require a license of [Mosek](https://www.mosek.com) to run the codes.
