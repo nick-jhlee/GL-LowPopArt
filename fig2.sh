@@ -1,13 +1,13 @@
 #!/bin/bash
 
-# Activate conda environment if needed
-# source activate your_env_name
+# Activate uv environment if needed
+# source .venv/bin/activate
 
 # Run recovery experiment
-python fig2.py --mode recovery
+PYTHONPATH=src python -m gl_lowpopart.experiments.fig2 --mode recovery
 
 # Run completion experiment
-python fig2.py --mode completion
+PYTHONPATH=src python -m gl_lowpopart.experiments.fig2 --mode completion
 
 # Optional: Combine the plots into a single figure
 # You can use ImageMagick if installed:

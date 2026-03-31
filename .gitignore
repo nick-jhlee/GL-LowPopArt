@@ -1,6 +1,8 @@
 problem_instances/
 results/
 logs/
+.venv/
+__pycache__/
 *.pyc
 *.pyo
 *.pyd

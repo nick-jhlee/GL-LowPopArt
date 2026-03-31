@@ -1,0 +1,5 @@
+[console_scripts]
+gl-fig1 = gl_lowpopart.experiments.fig1:main
+gl-fig1-plot = gl_lowpopart.plotting.fig1:main
+gl-fig2 = gl_lowpopart.experiments.fig2:main
+gl-fig2-plot = gl_lowpopart.plotting.fig2:main

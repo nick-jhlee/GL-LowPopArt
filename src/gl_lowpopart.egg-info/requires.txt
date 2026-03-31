@@ -1,0 +1,7 @@
+cvxpy>=1.5.3
+h5py>=3.12.1
+matplotlib>=3.10.0
+mosek>=11.0.21
+numpy>=2.0.1
+scipy>=1.15.3
+tqdm>=4.67.1

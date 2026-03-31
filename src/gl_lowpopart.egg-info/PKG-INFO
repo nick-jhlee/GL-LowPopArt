@@ -1,3 +1,17 @@
+Metadata-Version: 2.4
+Name: gl-lowpopart
+Version: 0.1.0
+Summary: Code for GL-LowPopArt experiments
+Requires-Python: <3.13,>=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: cvxpy>=1.5.3
+Requires-Dist: h5py>=3.12.1
+Requires-Dist: matplotlib>=3.10.0
+Requires-Dist: mosek>=11.0.21
+Requires-Dist: numpy>=2.0.1
+Requires-Dist: scipy>=1.15.3
+Requires-Dist: tqdm>=4.67.1
+
 Codes for [_GL-LowPopArt: A Nearly Instance-Wise Minimax-Optimal Estimator for Generalized Low-Rank Trace Regression_](https://openreview.net/forum?id=mMxiIP3Gxu) (AISTATS 2026) by [Junghyun Lee](https://nick-jhlee.github.io/), [Kyoungseok Jang](https://jajajang.github.io/), [Kwang-Sung Jun](https://kwangsungjun.github.io/), [Milan Vojnović](https://personal.lse.ac.uk/vojnovic/), and [Se-Young Yun](https://fbsqkd.github.io/).
 
 If you plan to use this repository or cite our paper, please use the following bibtex format:
