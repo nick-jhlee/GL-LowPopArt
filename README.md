@@ -42,7 +42,7 @@ $ uv sync
 # Reproducing Figure 1
 Run
 ```shell
-$ bash fig1.sh && PYTHONPATH=src python -m gl_lowpopart.plotting.fig1
+$ bash fig1.sh
 ```
 For Poisson experiments, run:
 ```shell

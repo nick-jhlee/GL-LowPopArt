@@ -1,18 +1,33 @@
 """Shared plotting helpers."""
 
+import json
+import os
+
 import matplotlib.pyplot as plt
 
 from gl_lowpopart.config import figure_file, result_file
 
 
 def load_pair(fig: str, model: str):
-    import json
+    available = load_available_modes(fig, model)
+    missing = [mode for mode in ("completion", "recovery", "hard") if mode not in available]
+    if missing:
+        missing_paths = [result_file(fig, mode, model) for mode in missing]
+        raise FileNotFoundError(f"Missing required JSON outputs: {missing_paths}")
+    return available["completion"], available["recovery"], available["hard"]
 
-    with open(result_file(fig, "completion", model), "r") as f:
-        completion = json.load(f)
-    with open(result_file(fig, "recovery", model), "r") as f:
-        recovery = json.load(f)
-    return completion, recovery
+
+def load_available_modes(fig: str, model: str):
+    available = {}
+    for mode in ("completion", "recovery", "hard"):
+        path = result_file(fig, mode, model)
+        if os.path.exists(path):
+            with open(path, "r") as f:
+                available[mode] = json.load(f)
+    if not available:
+        paths = [result_file(fig, mode, model) for mode in ("completion", "recovery", "hard")]
+        raise FileNotFoundError(f"No JSON outputs found. Expected one of: {paths}")
+    return available
 
 
 def set_style():

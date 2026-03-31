@@ -12,7 +12,7 @@ from gl_lowpopart.config import PROBLEM_INSTANCES_DIR
 from gl_lowpopart.utils import dsigmoid, sigmoid
 
 
-class OneBitCompletion:
+class MatrixCompletion:
     def __init__(self, arm_set, Theta_star, model="bernoulli", poisson_clip=10.0):
         self.arm_set = arm_set
         self.Theta_star = Theta_star
@@ -120,5 +120,5 @@ def generate_Theta_star(d1, d2, r, rng=None, symmetric=True):
         V = rng.randn(d2, r)
         V, _ = np.linalg.qr(V)
         Theta_star = U @ V.T
-    return 2 * Theta_star
+    return 5 * Theta_star
 

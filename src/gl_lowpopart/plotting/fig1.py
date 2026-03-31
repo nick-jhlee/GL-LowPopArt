@@ -8,7 +8,7 @@ import numpy as np
 from tqdm import tqdm
 
 from gl_lowpopart.config import RESULTS_JSON_DIR
-from gl_lowpopart.plotting.common import load_pair, save_outputs, set_style
+from gl_lowpopart.plotting.common import load_available_modes, save_outputs, set_style
 
 
 def plot_data(ax, data, Ns, methods, styles, title, specific_Ns=None):
@@ -22,9 +22,11 @@ def plot_data(ax, data, Ns, methods, styles, title, specific_Ns=None):
         sorted_cis = np.array(cis)[sorted_indices]
         if specific_Ns is not None:
             mask = np.isin(sorted_Ns, specific_Ns)
-            sorted_Ns = sorted_Ns[mask]
-            sorted_means = sorted_means[mask]
-            sorted_cis = sorted_cis[mask]
+            # Fall back to all available Ns when the requested subset is too sparse.
+            if np.count_nonzero(mask) >= 2:
+                sorted_Ns = sorted_Ns[mask]
+                sorted_means = sorted_means[mask]
+                sorted_cis = sorted_cis[mask]
 
         lower_cis = [ci[0] for ci in sorted_cis]
         upper_cis = [ci[1] for ci in sorted_cis]
@@ -55,9 +57,8 @@ def main():
     parser.add_argument("--model", type=str, choices=["bernoulli", "poisson"], default="bernoulli")
     args = parser.parse_args()
 
-    completion_data, recovery_data = load_pair("Fig1", args.model)
-    completion_Ns = completion_data["metadata"]["Ns"]
-    recovery_Ns = recovery_data["metadata"]["Ns"]
+    mode_data = load_available_modes("Fig1", args.model)
+    mode_order = [mode for mode in ("completion", "recovery") if mode in mode_data]
 
     methods = {
         "Stage I (no E-optimal)": "U",
@@ -67,8 +68,11 @@ def main():
         "Stage I+II (no E, with GL)": "U+GL",
         "Stage I+II (with E, with GL)": "E+GL",
     }
-    if "BMF" in completion_data and "BMF" in recovery_data:
+    if all("BMF" in mode_data[mode] for mode in mode_order):
         methods = {"BMF": "BMF-GD", **methods}
+    methods = {method: label for method, label in methods.items() if all(method in mode_data[mode] for mode in mode_order)}
+    if not methods:
+        raise ValueError("No common methods found in available result files to plot.")
 
     styles = {
         "Stage I (no E-optimal)": {"color": "#0072B2", "linestyle": "--", "marker": "s"},
@@ -82,28 +86,26 @@ def main():
         styles["BMF"] = {"color": "#000000", "linestyle": "-", "marker": "o"}
 
     set_style()
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(56, 16))
-    completion_results = plot_data(
-        ax1, completion_data, completion_Ns, methods, styles, "Matrix Completion", specific_Ns=[10000, 20000, 30000, 40000, 50000]
-    )
-    recovery_results = plot_data(
-        ax2, recovery_data, recovery_Ns, methods, styles, "Matrix Recovery", specific_Ns=[10000, 20000, 30000, 40000, 50000]
-    )
-    handles, labels = ax1.get_legend_handles_labels()
-    fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 1.05), ncol=len(methods), frameon=True)
-    plt.tight_layout()
+    fig, axes = plt.subplots(len(mode_order), 1, figsize=(28, 12 * len(mode_order)))
+    if len(mode_order) == 1:
+        axes = [axes]
+
+    mode_titles = {"completion": "Matrix Completion", "recovery": "Matrix Recovery"}
+    per_mode_results = {}
+    for ax, mode in zip(axes, mode_order):
+        data = mode_data[mode]
+        Ns = data["metadata"]["Ns"]
+        per_mode_results[mode] = {"Ns": Ns, "methods": plot_data(ax, data, Ns, methods, styles, mode_titles[mode])}
+        # , specific_Ns=[10000, 20000, 30000, 40000, 50000]
+
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 1.01), ncol=len(methods), frameon=True)
+    plt.tight_layout(rect=(0, 0, 1, 0.96))
     save_outputs("fig1", args.model)
 
     suffix = "" if args.model == "bernoulli" else f"_{args.model}"
     with open(f"{RESULTS_JSON_DIR}/fig1_results{suffix}.json", "w") as f:
-        json.dump(
-            {
-                "completion": {"Ns": completion_Ns, "methods": completion_results},
-                "recovery": {"Ns": recovery_Ns, "methods": recovery_results},
-            },
-            f,
-            indent=2,
-        )
+        json.dump(per_mode_results, f, indent=2)
 
 
 if __name__ == "__main__":

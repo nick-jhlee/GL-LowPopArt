@@ -6,15 +6,16 @@ from datetime import datetime
 
 DEFAULT_PARAMS = {
     "K": 150,
-    "delta": 0.001,
-    "Ns": [10000, 20000, 30000, 40000, 50000],
-    "c_lambda": 1,
+    "delta": 0.05,
+    "Ns": [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000],
+    # "Ns": [10000, 20000, 30000, 40000, 50000],
+    "c_lambda": 4,
     "c_nu": 1,
     "Rmax": 1 / 4,
     "d1": 3,
     "d2": 3,
     "r": 1,
-    "num_repeats": 60,
+    "num_repeats": 10,
 }
 
 RESULTS_DIR = "results"

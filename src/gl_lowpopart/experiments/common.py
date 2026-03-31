@@ -9,7 +9,7 @@ from gl_lowpopart.config import PROBLEM_INSTANCES_DIR
 from gl_lowpopart.core.burer_monteiro import Burer_Monteiro
 from gl_lowpopart.core.optimization import GL_LowPopArt, nuc_norm_MLE
 from gl_lowpopart.core.problems import (
-    OneBitCompletion,
+    MatrixCompletion,
     generate_Theta_star,
     generate_arm_set,
     load_problem_instance,
@@ -72,7 +72,7 @@ def build_problem_instances(
 
 
 def build_env(arm_set, Theta_star, model: str):
-    env = OneBitCompletion(arm_set, Theta_star, model=model)
+    env = MatrixCompletion(arm_set, Theta_star, model=model)
     env.Theta_star = Theta_star
     return env
 

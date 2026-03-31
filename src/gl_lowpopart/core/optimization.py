@@ -140,7 +140,10 @@ def GL_LowPopArt(env, N2, d1, d2, delta, Theta0, c_nu=1, GL_optimal=True):
     Theta_Catoni += Theta0
 
     U, S, Vt = np.linalg.svd(Theta_Catoni)
-    tau = np.sqrt(16 * design_value * np.log(4 * (d1 + d2) / delta) / (c_nu * N2))
-    S_truncated = S * (S > tau).astype(int)
+    # tau = np.sqrt(16 * design_value * np.log(4 * (d1 + d2) / delta) / (c_nu * N2))
+    # S_truncated = S * (S > tau).astype(int)
+    ## hard truncation with r
+    S_truncated = np.zeros(np.shape(S)[0])
+    S_truncated[:1] = S[:1]
     return U @ np.diag(S_truncated) @ Vt
 
