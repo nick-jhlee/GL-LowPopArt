@@ -13,11 +13,11 @@ from tqdm import tqdm
 from gl_lowpopart.config import DEFAULT_PARAMS, result_file, setup_logging
 from gl_lowpopart.core.optimization import GL_LowPopArt, nuc_norm_MLE
 from gl_lowpopart.experiments.common import build_env, build_problem_instances
-from gl_lowpopart.utils import studentized_double_bootstrap
+from gl_lowpopart.utils import mean_t_ci
 
 
 def run_single_repetition(args):
-    run_idx, N, mode, model, d1, d2, r, K, delta, c_lambda, c_nu, Rmax, instance = args
+    run_idx, N, mode, model, d1, d2, r, K, delta, c_lambda, c_nu, Rmax, instance, stage1_solver = args
     arm_set, Theta_star = instance
     env = build_env(arm_set, Theta_star, model=model)
 
@@ -60,12 +60,12 @@ def run_single_repetition(args):
     nuc_coef = c_lambda * np.sqrt(8 * Rmax * np.log((d1 + d2) / delta) / N1)
 
     if error_uniform is None:
-        Theta0_uniform, _, _ = nuc_norm_MLE(env, N1, d1, d2, nuc_coef, E_optimal=False)
+        Theta0_uniform, _, _ = nuc_norm_MLE(env, N1, d1, d2, nuc_coef, E_optimal=False, stage1_solver=stage1_solver)
         Theta_uniform = GL_LowPopArt(env, N2, d1, d2, delta, Theta0_uniform, c_nu)
         error_uniform = float(np.linalg.norm(Theta_uniform - Theta_star, "nuc"))
 
     if error_e_optimal is None:
-        Theta0_e_optimal, _, _ = nuc_norm_MLE(env, N1, d1, d2, nuc_coef, E_optimal=True)
+        Theta0_e_optimal, _, _ = nuc_norm_MLE(env, N1, d1, d2, nuc_coef, E_optimal=True, stage1_solver=stage1_solver)
         Theta_e_optimal = GL_LowPopArt(env, N2, d1, d2, delta, Theta0_e_optimal, c_nu)
         error_e_optimal = float(np.linalg.norm(Theta_e_optimal - Theta_star, "nuc"))
 
@@ -87,7 +87,7 @@ def run_single_repetition(args):
     }
 
 
-def run_experiment(mode, model, d1, d2, r, K, num_repeats, delta, Ns, c_lambda, c_nu, Rmax, seed=42):
+def run_experiment(mode, model, d1, d2, r, K, num_repeats, delta, Ns, c_lambda, c_nu, Rmax, seed=42, stage1_solver="fista"):
     np.random.seed(seed)
     problem_instances = build_problem_instances(mode, model, d1, d2, r, K, num_repeats, seed=seed)
 
@@ -97,6 +97,18 @@ def run_experiment(mode, model, d1, d2, r, K, num_repeats, delta, Ns, c_lambda, 
     errors_random_all = []
 
     pbar = tqdm(Ns, desc="Sample sizes")
+    run_params = {
+        "d1": d1,
+        "d2": d2,
+        "r": r,
+        "K": K,
+        "num_repeats": num_repeats,
+        "delta": delta,
+        "c_lambda": c_lambda,
+        "c_nu": c_nu,
+        "Rmax": Rmax,
+        "stage1_solver": stage1_solver,
+    }
     for N in pbar:
         pbar.set_description(f"Processing N={N}")
         logging.info("Processing N=%s", N)
@@ -111,7 +123,9 @@ def run_experiment(mode, model, d1, d2, r, K, num_repeats, delta, Ns, c_lambda, 
             try:
                 with open(results_path, "r") as f:
                     current_results = json.load(f)
-                if len(current_results["uniform"]["mean"]) > Ns.index(N):
+                metadata = current_results.get("metadata", {})
+                params_match = metadata.get("mode") == mode and metadata.get("model") == model and metadata.get("params") == run_params
+                if params_match and len(current_results["uniform"]["mean"]) > Ns.index(N):
                     errors_uniform_reps = current_results["uniform"]["raw"][str(N)]
                     errors_e_optimal_reps = current_results["e_optimal"]["raw"][str(N)]
                     errors_zero_reps = current_results["zero"]["raw"][str(N)]
@@ -125,7 +139,7 @@ def run_experiment(mode, model, d1, d2, r, K, num_repeats, delta, Ns, c_lambda, 
                 pass
 
         args_list = [
-            (run_idx, N, mode, model, d1, d2, r, K, delta, c_lambda, c_nu, Rmax, problem_instances[run_idx])
+            (run_idx, N, mode, model, d1, d2, r, K, delta, c_lambda, c_nu, Rmax, problem_instances[run_idx], stage1_solver)
             for run_idx in range(num_repeats)
         ]
 
@@ -183,6 +197,7 @@ def run_experiment(mode, model, d1, d2, r, K, num_repeats, delta, Ns, c_lambda, 
                     "c_lambda": c_lambda,
                     "c_nu": c_nu,
                     "Rmax": Rmax,
+                    "stage1_solver": stage1_solver,
                 },
                 "timestamp": datetime.now().isoformat(),
             },
@@ -198,22 +213,22 @@ def save_results(all_errors, Ns, mode, model, params, logger):
     results = {
         "uniform": {
             "mean": np.mean(errors_uniform_all, axis=1).tolist(),
-            "ci": [studentized_double_bootstrap(errors_uniform_all[i]) for i in range(len(errors_uniform_all))],
+            "ci": [mean_t_ci(errors_uniform_all[i]) for i in range(len(errors_uniform_all))],
             "raw": {str(N): errors_uniform_all[i] for i, N in enumerate(Ns[: len(errors_uniform_all)])},
         },
         "e_optimal": {
             "mean": np.mean(errors_e_optimal_all, axis=1).tolist(),
-            "ci": [studentized_double_bootstrap(errors_e_optimal_all[i]) for i in range(len(errors_e_optimal_all))],
+            "ci": [mean_t_ci(errors_e_optimal_all[i]) for i in range(len(errors_e_optimal_all))],
             "raw": {str(N): errors_e_optimal_all[i] for i, N in enumerate(Ns[: len(errors_e_optimal_all)])},
         },
         "zero": {
             "mean": np.mean(errors_zero_all, axis=1).tolist(),
-            "ci": [studentized_double_bootstrap(errors_zero_all[i]) for i in range(len(errors_zero_all))],
+            "ci": [mean_t_ci(errors_zero_all[i]) for i in range(len(errors_zero_all))],
             "raw": {str(N): errors_zero_all[i] for i, N in enumerate(Ns[: len(errors_zero_all)])},
         },
         "random": {
             "mean": np.mean(errors_random_all, axis=1).tolist(),
-            "ci": [studentized_double_bootstrap(errors_random_all[i]) for i in range(len(errors_random_all))],
+            "ci": [mean_t_ci(errors_random_all[i]) for i in range(len(errors_random_all))],
             "raw": {str(N): errors_random_all[i] for i, N in enumerate(Ns[: len(errors_random_all)])},
         },
         "metadata": {"mode": mode, "model": model, "Ns": Ns, "params": params, "timestamp": datetime.now().isoformat()},
@@ -231,11 +246,21 @@ def main():
     parser.add_argument("--d2", type=int, default=DEFAULT_PARAMS["d2"])
     parser.add_argument("--r", type=int, default=DEFAULT_PARAMS["r"])
     parser.add_argument("--num_repeats", type=int, default=DEFAULT_PARAMS["num_repeats"])
+    parser.add_argument("--stage1_solver", type=str, choices=["fista", "cvxpy"], default="fista")
     args = parser.parse_args()
 
     logger = setup_logging(args.mode, "fig2", model=args.model)
     params = DEFAULT_PARAMS.copy()
-    params.update({"model": args.model, "d1": args.d1, "d2": args.d2, "r": args.r, "num_repeats": args.num_repeats})
+    params.update(
+        {
+            "model": args.model,
+            "d1": args.d1,
+            "d2": args.d2,
+            "r": args.r,
+            "num_repeats": args.num_repeats,
+            "stage1_solver": args.stage1_solver,
+        }
+    )
     all_errors = run_experiment(
         args.mode,
         args.model,
@@ -249,6 +274,7 @@ def main():
         params["c_lambda"],
         params["c_nu"],
         params["Rmax"],
+        stage1_solver=args.stage1_solver,
     )
     save_results(all_errors, params["Ns"], args.mode, args.model, params, logger)
 

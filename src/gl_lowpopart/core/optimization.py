@@ -1,21 +1,41 @@
 """Stage-I and Stage-II optimization routines."""
 
+import os
 import warnings
 
-import cvxpy as cp
-import mosek
 import numpy as np
 
 from gl_lowpopart.utils import psi_nu
 
+try:
+    import cvxpy as cp
+except ImportError:
+    cp = None
+
+try:
+    import mosek
+except ImportError:
+    mosek = None
+
 warnings.filterwarnings("ignore", category=UserWarning, module="mosek")
 warnings.filterwarnings("ignore", category=UserWarning, module="cvxpy")
 
-mosek_env = mosek.Env()
-mosek_env.putlicensepath("../mosek/mosek.lic")
+if mosek is not None:
+    mosek_env = mosek.Env()
+    # Prefer user-level license outside repository.
+    _default_license = os.path.expanduser("~/.mosek/mosek.lic")
+    _license_path = os.environ.get("MOSEKLM_LICENSE_FILE", _default_license)
+    if os.path.exists(_license_path):
+        mosek_env.putlicensepath(_license_path)
+
+
+def _require_cvxpy(feature_name):
+    if cp is None:
+        raise ImportError(f"{feature_name} requires cvxpy to be installed.")
 
 
 def E_optimal_design(env):
+    _require_cvxpy("E-optimal design")
     X_arms = env.X_arms
     K = env.K
     pi_E = cp.Variable(K, nonneg=True)
@@ -32,7 +52,104 @@ def E_optimal_design(env):
     return pi_E
 
 
-def nuc_norm_MLE(env, N1, d1, d2, nuc_coef, E_optimal=True):
+def _svt(matrix, threshold):
+    """Singular Value Thresholding (prox of nuclear norm)."""
+    U, s, Vt = np.linalg.svd(matrix, full_matrices=False)
+    s_shrunk = np.maximum(s - threshold, 0.0)
+    return U @ (s_shrunk[:, None] * Vt)
+
+
+def _neg_loglik_and_grad(theta_mat, X, y, model):
+    """Average negative log-likelihood and gradient wrt theta matrix."""
+    n_samples = X.shape[0]
+    theta = theta_mat.flatten("F")
+    eta = X @ theta
+
+    if model == "bernoulli":
+        eta_clip = np.clip(eta, -30.0, 30.0)
+        mu = 1.0 / (1.0 + np.exp(-eta_clip))
+        loss = np.mean(np.log1p(np.exp(eta_clip)) - y * eta_clip)
+        grad_vec = (X.T @ (mu - y)) / n_samples
+    elif model == "poisson":
+        eta_clip = np.clip(eta, -20.0, 20.0)
+        mu = np.exp(eta_clip)
+        loss = np.mean(mu - y * eta_clip)
+        grad_vec = (X.T @ (mu - y)) / n_samples
+    else:
+        raise ValueError(f"Unsupported model: {model}")
+
+    grad = grad_vec.reshape(theta_mat.shape, order="F")
+    return float(loss), grad
+
+
+def _fista_nuclear_mle(X, y, d1, d2, nuc_coef, model, max_iter=500, tol=1e-6):
+    """Solve min f(Theta) + nuc_coef * ||Theta||_* via restarted FISTA + backtracking."""
+    theta = np.zeros((d1, d2), dtype=np.float64)
+    yk = theta.copy()
+    tk = 1.0
+    lipschitz = 1.0
+
+    for _ in range(max_iter):
+        f_yk, grad_yk = _neg_loglik_and_grad(yk, X, y, model)
+
+        while True:
+            step = 1.0 / lipschitz
+            candidate = _svt(yk - step * grad_yk, nuc_coef * step)
+            f_candidate, _ = _neg_loglik_and_grad(candidate, X, y, model)
+            diff = candidate - yk
+            quad_upper = f_yk + np.sum(grad_yk * diff) + 0.5 * lipschitz * np.sum(diff * diff)
+            if f_candidate <= quad_upper + 1e-12:
+                break
+            lipschitz *= 2.0
+
+        t_next = 0.5 * (1.0 + np.sqrt(1.0 + 4.0 * tk * tk))
+        momentum = ((tk - 1.0) / t_next) * (candidate - theta)
+        y_next = candidate + momentum
+
+        # Adaptive restart (O'Donoghue-Candes): drop momentum if it is misaligned.
+        if np.sum((candidate - theta) * (yk - candidate)) > 0.0:
+            t_next = 1.0
+            y_next = candidate
+
+        denom = max(1.0, np.linalg.norm(theta, ord="fro"))
+        rel_change = np.linalg.norm(candidate - theta, ord="fro") / denom
+
+        theta = candidate
+        yk = y_next
+        tk = t_next
+        lipschitz = max(lipschitz * 0.9, 1e-6)
+
+        if rel_change < tol:
+            break
+
+    return theta
+
+
+def _cvxpy_nuclear_mle(X, y, d1, d2, nuc_coef, model):
+    _require_cvxpy("Stage-I cvxpy solver")
+    Theta = cp.Variable((d1, d2))
+    theta = cp.vec(Theta, order="F")
+    linear_term = X @ theta
+
+    if model == "bernoulli":
+        log_likelihood = cp.sum(cp.multiply(y, linear_term) - cp.logistic(linear_term)) / X.shape[0]
+    elif model == "poisson":
+        log_likelihood = cp.sum(cp.multiply(y, linear_term) - cp.exp(linear_term)) / X.shape[0]
+    else:
+        raise ValueError(f"Unsupported model: {model}")
+
+    prob = cp.Problem(cp.Maximize(log_likelihood - nuc_coef * cp.normNuc(Theta)))
+    try:
+        prob.solve(solver=cp.MOSEK)
+    except Exception:
+        prob.solve(solver=cp.SCS, verbose=False)
+
+    if Theta.value is None:
+        raise RuntimeError("cvxpy Stage-I solver failed to produce a solution.")
+    return np.array(Theta.value)
+
+
+def nuc_norm_MLE(env, N1, d1, d2, nuc_coef, E_optimal=True, stage1_solver="fista"):
     K = env.K
     arm_set = env.arm_set
     pi_E = E_optimal_design(env) if E_optimal else np.ones(K) / K
@@ -44,24 +161,13 @@ def nuc_norm_MLE(env, N1, d1, d2, nuc_coef, E_optimal=True):
         X1[i] = arm.flatten("F")
         y1[i] = env.get_reward(arm)
 
-    Theta = cp.Variable((d1, d2))
-    theta = cp.vec(Theta, order="F")
-    linear_term = X1 @ theta
-    if env.model == "bernoulli":
-        log_likelihood = cp.sum(cp.multiply(y1, linear_term) - cp.logistic(linear_term)) / N1
-    elif env.model == "poisson":
-        log_likelihood = cp.sum(cp.multiply(y1, linear_term) - cp.exp(linear_term)) / N1
+    if stage1_solver == "fista":
+        Theta = _fista_nuclear_mle(X1, y1, d1, d2, nuc_coef, env.model)
+    elif stage1_solver == "cvxpy":
+        Theta = _cvxpy_nuclear_mle(X1, y1, d1, d2, nuc_coef, env.model)
     else:
-        raise ValueError(f"Unsupported model: {env.model}")
-
-    objective = cp.Maximize(log_likelihood - nuc_coef * cp.normNuc(Theta))
-    prob = cp.Problem(objective)
-    try:
-        prob.solve(solver=cp.MOSEK)
-    except Exception:
-        prob.solve(solver=cp.MOSEK, verbose=True)
-
-    return np.array(Theta.value), X1, y1
+        raise ValueError(f"Unknown stage1_solver: {stage1_solver}")
+    return Theta, X1, y1
 
 
 def GL_LowPopArt(env, N2, d1, d2, delta, Theta0, c_nu=1, GL_optimal=True):
@@ -71,13 +177,14 @@ def GL_LowPopArt(env, N2, d1, d2, delta, Theta0, c_nu=1, GL_optimal=True):
     d_ = d1 * d2
     theta0 = Theta0.flatten("F")
 
-    log_factor = np.log(4 * (d1 + d2) / delta)
+    log_factor = np.log((d1 + d2) / delta)
     nu_factor = c_nu * np.sqrt(log_factor)
 
     mu_diags = np.diag([env.dmean_from_eta(tmp) for tmp in X_arms @ theta0])
     mu_diags = np.ascontiguousarray(mu_diags, dtype=np.float64)
 
     if GL_optimal:
+        _require_cvxpy("GL-optimal design")
         pi = cp.Variable(K, nonneg=True)
         mu_diags_cp = cp.Constant(mu_diags)
         H_pi = X_arms.T @ cp.diag(pi) @ mu_diags_cp @ X_arms
@@ -85,12 +192,14 @@ def GL_LowPopArt(env, N2, d1, d2, delta, Theta0, c_nu=1, GL_optimal=True):
 
         D_col = cp.Constant(np.zeros((d2, d2)))
         for m in range(d1):
-            idx_set = [m * d1 + i for i in range(d1)]
+            # Fixed row m, varying columns.
+            idx_set = [m + l * d1 for l in range(d2)]
             D_col = D_col + H_inv[np.ix_(idx_set, idx_set)]
 
         D_row = cp.Constant(np.zeros((d1, d1)))
         for m in range(d2):
-            idx_set = [m + l * d1 for l in range(d2)]
+            # Fixed column m, varying rows.
+            idx_set = [m * d1 + i for i in range(d1)]
             D_row = D_row + H_inv[np.ix_(idx_set, idx_set)]
 
         objective = cp.Minimize(cp.maximum(cp.lambda_max(D_col), cp.lambda_max(D_row)))
@@ -111,11 +220,13 @@ def GL_LowPopArt(env, N2, d1, d2, delta, Theta0, c_nu=1, GL_optimal=True):
         H_inv = np.linalg.inv(H_pi)
         D_col = np.zeros((d2, d2))
         for m in range(d1):
-            idx_set = [m * d1 + i for i in range(d1)]
+            # Fixed row m, varying columns.
+            idx_set = [m + l * d1 for l in range(d2)]
             D_col = D_col + H_inv[np.ix_(idx_set, idx_set)]
         D_row = np.zeros((d1, d1))
         for m in range(d2):
-            idx_set = [m + l * d1 for l in range(d2)]
+            # Fixed column m, varying rows.
+            idx_set = [m * d1 + i for i in range(d1)]
             D_row = D_row + H_inv[np.ix_(idx_set, idx_set)]
         design_value = max(np.linalg.eigvals(D_col).real.max(), np.linalg.eigvals(D_row).real.max())
 
@@ -127,23 +238,34 @@ def GL_LowPopArt(env, N2, d1, d2, delta, Theta0, c_nu=1, GL_optimal=True):
         arm = arm_set[idx]
         X2[i] = arm.flatten("F")
         y2[i] = env.get_reward(arm)
-
+    
     nu = nu_factor / np.sqrt(design_value * N2)
-    Theta_Catoni = np.zeros((d1, d2))
-    for t, y in enumerate(y2):
-        x = X2[t].reshape((d_, 1))
-        vector_one_sample = (y - env.mean_from_eta(np.dot(theta0, x))) * H_inv_optimal @ x
-        matrix_one_sample = np.reshape(vector_one_sample, (d1, d2), "F")
-        Theta_Catoni += psi_nu(matrix_one_sample, nu)
+    
+    # 1. Compute all residuals at once
+    residuals = y2 - env.mean_from_eta(X2 @ theta0) # Shape: (N2,)
 
-    Theta_Catoni /= N2
+    # 2. Compute the weighted vectors for all N2 samples
+    # X2 is (N2, d_), H_inv_optimal is (d_, d_)
+    vectors_batch = residuals[:, None] * (X2 @ H_inv_optimal) # Shape: (N2, d_)
+
+    # 3. Reshape all vectors into matrices simultaneously 
+    matrices_batch = vectors_batch.reshape(N2, d1, d2, order="F")
+
+    # 4. Apply psi_nu and sum over the sample dimension
+    Theta_Catoni = np.sum(psi_nu(matrices_batch, nu), axis=0) / N2
     Theta_Catoni += Theta0
 
+    from scipy.sparse.linalg import svds
+
+    # # Compute only the top 1 singular value and vectors
+    # U_k, S_k, Vt_k = svds(Theta_Catoni, k=1)
+    # Theta_final = U_k @ np.diag(S_k) @ Vt_k
     U, S, Vt = np.linalg.svd(Theta_Catoni)
-    # tau = np.sqrt(16 * design_value * np.log(4 * (d1 + d2) / delta) / (c_nu * N2))
-    # S_truncated = S * (S > tau).astype(int)
-    ## hard truncation with r
-    S_truncated = np.zeros(np.shape(S)[0])
-    S_truncated[:1] = S[:1]
-    return U @ np.diag(S_truncated) @ Vt
+    tau = np.sqrt(16 * design_value * np.log(4 * (d1 + d2) / delta) / (c_nu * N2))
+    S_truncated = S * (S > tau).astype(int)
+    # ## hard truncation with r
+    # S_truncated = np.zeros(np.shape(S)[0])
+    # S_truncated[:1] = S[:1]
+    Theta_final = U @ np.diag(S_truncated) @ Vt
+    return Theta_final
 

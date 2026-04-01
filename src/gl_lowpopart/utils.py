@@ -1,9 +1,13 @@
 """Utility helpers for GL-LowPopArt."""
 
-import multiprocessing as mp
 import warnings
 
 import numpy as np
+
+try:
+    from scipy.stats import t as student_t
+except ImportError:
+    student_t = None
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 
@@ -18,74 +22,76 @@ def dsigmoid(x):
 
 
 def psi(x):
-    if x >= 0:
-        return np.log(1 + x + x**2 / 2)
-    return -np.log(1 - x + x**2 / 2)
+    x_arr = np.asarray(x)
+    out = np.where(
+        x_arr >= 0,
+        np.log1p(x_arr + 0.5 * x_arr**2),
+        -np.log1p(-x_arr + 0.5 * x_arr**2),
+    )
+    if np.ndim(out) == 0:
+        return float(out)
+    return out
 
 
 def dilation(a):
     d1, d2 = a.shape
     return np.bmat([[np.zeros((d1, d1)), a], [a.T, np.zeros((d2, d2))]])
 
+def psi_nu(A_batch, nu):
+    """
+    Computes psi_nu for a batch of matrices simultaneously.
+    A_batch: shape (N, d1, d2)
+    """
+    N, d1, d2 = A_batch.shape
+    d_sum = d1 + d2
+    
+    # 1. Batched Dilation
+    # Create an array of zeros of shape (N, d1+d2, d1+d2)
+    A_dil = np.zeros((N, d_sum, d_sum))
+    # Place A_batch in the upper right
+    A_dil[:, :d1, d1:] = A_batch
+    # Place transposed A_batch in the lower left
+    A_dil[:, d1:, :d1] = A_batch.transpose(0, 2, 1) 
+    
+    # 2. Batched Eigendecomposition
+    # np.linalg.eigh accepts (N, M, M) and returns w: (N, M), v: (N, M, M)
+    w, v = np.linalg.eigh(A_dil)
+    
+    # 3. Apply psi function to all eigenvalues
+    # Assuming psi_func can handle numpy arrays. If not, use np.vectorize(psi)(nu * w)
+    w_psi = psi(nu * w) # Shape: (N, d_sum)
+    
+    # 4. Batched Matrix Reconstruction: v @ diag(w_psi) @ v.T
+    # We use numpy broadcasting (w_psi[:, np.newaxis, :]) to multiply each column 
+    # of v by its corresponding eigenvalue before doing the batched matrix multiplication.
+    v_scaled = v * w_psi[:, np.newaxis, :] 
+    tmp_batch = (1 / nu) * np.matmul(v_scaled, v.transpose(0, 2, 1))
+    
+    # 5. Extract the upper right block for all N matrices
+    return tmp_batch[:, :d1, d1:]
 
-def psi_nu(a, nu):
-    d1, d2 = a.shape
-    a_dilation = dilation(a)
-    d, v = np.linalg.eigh(a_dilation)
-    d = np.diag([psi(nu * x) for x in d])
-    tmp = (1 / nu) * v @ d @ v.T
-    return tmp[:d1, d1 : d1 + d2]
+def mean_t_ci(data, alpha=0.05):
+    """Two-sided t-based confidence interval for the sample mean."""
+    arr = np.asarray(data, dtype=float)
+    arr = arr[np.isfinite(arr)]
 
+    if arr.size == 0:
+        return np.nan, np.nan
 
-def compute_boot_stat(args):
-    _, seed_outer, seed_inner, data, n_boot2 = args
-    n = len(data)
+    mean = float(np.mean(arr))
+    if arr.size == 1:
+        return mean, mean
 
-    rng_outer = np.random.default_rng(seed_outer)
-    boot_sample = rng_outer.choice(data, size=n, replace=True)
-    boot_mean = np.mean(boot_sample)
+    se = float(np.std(arr, ddof=1) / np.sqrt(arr.size))
+    if se == 0.0:
+        return mean, mean
 
-    rng_inner = np.random.default_rng(seed_inner)
-    boot2_means = np.array(
-        [np.mean(rng_inner.choice(boot_sample, size=n, replace=True)) for _ in range(n_boot2)]
-    )
-    boot_std = np.std(boot2_means, ddof=1)
-    return boot_mean, boot_std
+    if student_t is not None:
+        t_crit = float(student_t.ppf(1.0 - alpha / 2.0, arr.size - 1))
+    else:
+        # Fallback to normal approximation if scipy is unavailable.
+        t_crit = 1.959963984540054
 
-
-def studentized_double_bootstrap(data, n_boot=1000, n_boot2=500, alpha=0.05):
-    original_mean = np.mean(data)
-    rng = np.random.default_rng()
-    seeds_outer = rng.integers(0, 2**32, size=n_boot)
-    seeds_inner = rng.integers(0, 2**32, size=n_boot)
-    args = [(i, seeds_outer[i], seeds_inner[i], data, n_boot2) for i in range(n_boot)]
-
-    with mp.Pool(processes=mp.cpu_count()) as pool:
-        boot_stats = list(pool.imap(compute_boot_stat, args))
-
-    boot_means, boot_stds = zip(*boot_stats)
-    boot_means = np.array(boot_means)
-    boot_stds = np.array(boot_stds)
-    bias_corrected_mean = 2 * original_mean - np.mean(boot_means)
-
-    with np.errstate(divide="ignore", invalid="ignore"):
-        studentized_stats = (boot_means - bias_corrected_mean) / boot_stds
-
-    se_rng = np.random.default_rng()
-    original_boot2_means = np.array(
-        [np.mean(se_rng.choice(data, size=len(data), replace=True)) for _ in range(n_boot2)]
-    )
-    se_hat = np.std(original_boot2_means, ddof=1)
-
-    t_lower = np.percentile(studentized_stats, 100 * (alpha / 2))
-    t_upper = np.percentile(studentized_stats, 100 * (1 - alpha / 2))
-
-    ci_lower = original_mean - t_upper * se_hat
-    ci_upper = original_mean - t_lower * se_hat
-
-    if np.isnan(ci_lower) or np.isnan(ci_upper) or ci_lower < 0:
-        ci_lower = np.percentile(boot_means, 100 * (alpha / 2))
-        ci_upper = np.percentile(boot_means, 100 * (1 - alpha / 2))
-
-    return ci_lower, ci_upper
+    half_width = t_crit * se
+    return mean - half_width, mean + half_width
 

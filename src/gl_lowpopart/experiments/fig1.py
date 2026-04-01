@@ -12,7 +12,7 @@ from tqdm import tqdm
 
 from gl_lowpopart.config import DEFAULT_PARAMS, result_file, setup_logging
 from gl_lowpopart.experiments.common import build_env, build_problem_instances, run_bmf, run_stage1, run_stage1_2
-from gl_lowpopart.utils import studentized_double_bootstrap
+from gl_lowpopart.utils import mean_t_ci
 
 METRIC_SPECS = [
     ("error_stage1_no_e", "Stage I (no E-optimal)"),
@@ -82,14 +82,14 @@ def build_results_payload(metric_store, Ns, model, metadata, include_ci=False, e
             "raw": {str(N): metric_data[i] for i, N in enumerate(Ns[: len(metric_data)])},
         }
         if include_ci:
-            entry["ci"] = [studentized_double_bootstrap(metric_data[i]) for i in range(len(metric_data))]
+            entry["ci"] = [mean_t_ci(metric_data[i]) for i in range(len(metric_data))]
         results[metric_label] = entry
     results["metadata"] = metadata
     return results
 
 
 def run_single_repetition(args):
-    run_idx, N, mode, model, d1, d2, r, K, delta, c_lambda, c_nu, Rmax, instance, enabled_metric_keys = args
+    run_idx, N, mode, model, d1, d2, r, K, delta, c_lambda, c_nu, Rmax, instance, enabled_metric_keys, stage1_solver = args
     arm_set, Theta_star = instance
     env = build_env(arm_set, Theta_star, model=model)
     enabled_set = set(enabled_metric_keys)
@@ -97,11 +97,15 @@ def run_single_repetition(args):
     nuc_coef = np.sqrt(c_lambda * np.log((d1 + d2) / delta) / N)
     need_stage1_no_e = "error_stage1_no_e" in enabled_set or "error_bmf" in enabled_set
     if need_stage1_no_e:
-        error_stage1_no_e, X1, y1 = run_stage1(env, N, d1, d2, nuc_coef, False)
+        error_stage1_no_e, X1, y1 = run_stage1(env, N, d1, d2, nuc_coef, False, stage1_solver=stage1_solver)
     else:
         error_stage1_no_e, X1, y1 = np.nan, None, None
 
-    error_stage1_with_e = run_stage1(env, N, d1, d2, nuc_coef, True)[0] if "error_stage1_with_e" in enabled_set else np.nan
+    error_stage1_with_e = (
+        run_stage1(env, N, d1, d2, nuc_coef, True, stage1_solver=stage1_solver)[0]
+        if "error_stage1_with_e" in enabled_set
+        else np.nan
+    )
     error_bmf = run_bmf(env, d1, r, X1, y1) if "error_bmf" in enabled_set else np.nan
 
     N1 = N // 4
@@ -117,7 +121,9 @@ def run_single_repetition(args):
     for metric_key, flags in stage12_flags.items():
         if metric_key in enabled_set:
             use_e, use_gl = flags
-            stage12_results[metric_key] = run_stage1_2(env, N1, N2, d1, d2, nuc_coef, c_nu, delta, use_e, use_gl)
+            stage12_results[metric_key] = run_stage1_2(
+                env, N1, N2, d1, d2, nuc_coef, c_nu, delta, use_e, use_gl, stage1_solver=stage1_solver
+            )
         else:
             stage12_results[metric_key] = np.nan
 
@@ -130,54 +136,102 @@ def run_single_repetition(args):
     return {metric_key: results[metric_key] for metric_key in enabled_metric_keys}
 
 
-def run_experiment(mode, model, d1, d2, r, K, num_repeats, delta, Ns, c_lambda, c_nu, Rmax, logger, enabled_metric_keys, seed=42):
+def run_single_sample_size(args):
+    N, mode, model, d1, d2, r, K, delta, c_lambda, c_nu, Rmax, problem_instances, enabled_metric_keys, stage1_solver = args
+    metric_store_reps = empty_metric_store(model, enabled_metric_keys)
+    for run_idx, instance in enumerate(problem_instances):
+        result = run_single_repetition(
+            (run_idx, N, mode, model, d1, d2, r, K, delta, c_lambda, c_nu, Rmax, instance, enabled_metric_keys, stage1_solver)
+        )
+        for metric_key in metric_store_reps:
+            metric_store_reps[metric_key].append(result[metric_key])
+    return N, metric_store_reps
+
+
+def load_cached_reps(current_results, model, enabled_metric_keys, Ns, N, num_repeats):
+    n_idx = Ns.index(N)
+    cached_values = {}
+    for metric_key, metric_label in active_metric_specs(model, enabled_metric_keys):
+        entry = current_results.get(metric_label)
+        if not entry or "raw" not in entry or "mean" not in entry:
+            return None
+        if len(entry["mean"]) <= n_idx or str(N) not in entry["raw"]:
+            return None
+        values = entry["raw"][str(N)]
+        values_arr = np.asarray(values, dtype=float)
+        if len(values) != num_repeats or not np.all(np.isfinite(values_arr)):
+            return None
+        cached_values[metric_key] = values
+    return cached_values
+
+
+def cache_matches_run_config(current_results, mode, model, enabled_metric_keys, run_params):
+    metadata = current_results.get("metadata", {})
+    cached_methods = metadata.get("methods")
+    cached_params = metadata.get("params")
+    expected_methods = [METRIC_TO_ALIAS[metric_key] for metric_key in enabled_metric_keys]
+
+    if metadata.get("mode") != mode or metadata.get("model") != model:
+        return False
+    if cached_methods != expected_methods:
+        return False
+    if not isinstance(cached_params, dict):
+        return False
+
+    for key, value in run_params.items():
+        if cached_params.get(key) != value:
+            return False
+    return True
+
+
+def run_experiment(
+    mode, model, d1, d2, r, K, num_repeats, delta, Ns, c_lambda, c_nu, Rmax, logger, enabled_metric_keys, seed=42, stage1_solver="fista"
+):
     metric_store_all = empty_metric_store(model, enabled_metric_keys)
-
     problem_instances = build_problem_instances(mode, model, d1, d2, r, K, num_repeats, seed=seed)
-
-    pbar = tqdm(Ns, desc="Sample sizes")
-    for N in pbar:
-        pbar.set_description(f"Processing N={N}")
-        logger.info("Processing N=%s", N)
-
-        metric_store_reps = empty_metric_store(model, enabled_metric_keys)
-
-        results_file = result_file("Fig1", mode, model, intermediate=True)
-        if os.path.exists(results_file):
-            try:
-                with open(results_file, "r") as f:
-                    current_results = json.load(f)
-                key = "BMF" if "BMF" in current_results else "Stage I (no E-optimal)"
-                if len(current_results[key]["mean"]) > Ns.index(N):
-                    for metric_key, metric_label in active_metric_specs(model, enabled_metric_keys):
-                        if metric_label in current_results and "raw" in current_results[metric_label]:
-                            metric_store_reps[metric_key] = current_results[metric_label]["raw"][str(N)]
-                        else:
-                            metric_store_reps[metric_key] = [np.nan] * num_repeats
-                    append_metrics(metric_store_all, metric_store_reps)
-                    continue
-            except Exception as exc:
-                logger.warning("Failed to load existing results: %s", exc)
-
-        args_list = [
-            (run_idx, N, mode, model, d1, d2, r, K, delta, c_lambda, c_nu, Rmax, problem_instances[run_idx], enabled_metric_keys)
-            for run_idx in range(num_repeats)
-        ]
-
+    results_file = result_file("Fig1", mode, model, intermediate=True)
+    run_params = {
+        "d1": d1,
+        "d2": d2,
+        "r": r,
+        "K": K,
+        "num_repeats": num_repeats,
+        "delta": delta,
+        "c_lambda": c_lambda,
+        "c_nu": c_nu,
+        "Rmax": Rmax,
+        "stage1_solver": stage1_solver,
+    }
+    cached_by_n = {}
+    if os.path.exists(results_file):
         try:
-            num_cores = min(num_repeats, max(1, mp.cpu_count() - 1))
-            with mp.Pool(processes=num_cores) as pool:
-                results = list(tqdm(pool.imap(run_single_repetition, args_list), total=num_repeats, desc=f"Repeats N={N}", leave=False))
-            for result in results:
-                for metric_key in metric_store_reps:
-                    metric_store_reps[metric_key].append(result[metric_key])
+            with open(results_file, "r") as f:
+                current_results = json.load(f)
+            if cache_matches_run_config(current_results, mode, model, enabled_metric_keys, run_params):
+                for N in Ns:
+                    cached = load_cached_reps(current_results, model, enabled_metric_keys, Ns, N, num_repeats)
+                    if cached is not None:
+                        cached_by_n[N] = cached
+            else:
+                logger.info("Ignoring intermediate cache due to run config mismatch.")
         except Exception as exc:
-            logger.error("Parallel processing failed for N=%s: %s", N, exc)
-            for run_idx in tqdm(range(num_repeats), desc=f"Repeats N={N}", leave=False):
-                result = run_single_repetition(args_list[run_idx])
-                for metric_key in metric_store_reps:
-                    metric_store_reps[metric_key].append(result[metric_key])
+            logger.warning("Failed to load existing results: %s", exc)
 
+    pending_Ns = [N for N in Ns if N not in cached_by_n]
+    computed_by_n = {}
+    if pending_Ns:
+        n_workers = min(len(pending_Ns), max(1, mp.cpu_count() - 1))
+        args_list = [
+            (N, mode, model, d1, d2, r, K, delta, c_lambda, c_nu, Rmax, problem_instances, enabled_metric_keys, stage1_solver)
+            for N in pending_Ns
+        ]
+        with mp.Pool(processes=n_workers) as pool:
+            for N, metric_store_reps in tqdm(pool.imap(run_single_sample_size, args_list), total=len(args_list), desc="Sample sizes"):
+                computed_by_n[N] = metric_store_reps
+
+    for N in Ns:
+        logger.info("Processing N=%s", N)
+        metric_store_reps = cached_by_n[N] if N in cached_by_n else computed_by_n[N]
         append_metrics(metric_store_all, metric_store_reps)
 
         first_metric_key = enabled_metric_keys[0]
@@ -200,13 +254,14 @@ def run_experiment(mode, model, d1, d2, r, K, num_repeats, delta, Ns, c_lambda, 
                     "c_lambda": c_lambda,
                     "c_nu": c_nu,
                     "Rmax": Rmax,
+                    "stage1_solver": stage1_solver,
                 },
                 "timestamp": datetime.now().isoformat(),
             },
             include_ci=False,
             enabled_metric_keys=enabled_metric_keys,
         )
-        with open(result_file("Fig1", mode, model, intermediate=True), "w") as f:
+        with open(results_file, "w") as f:
             json.dump(current_results, f, indent=2)
 
     return metric_store_all
@@ -242,6 +297,7 @@ def main():
     parser.add_argument("--d2", type=int, default=DEFAULT_PARAMS["d2"])
     parser.add_argument("--r", type=int, default=DEFAULT_PARAMS["r"])
     parser.add_argument("--num_repeats", type=int, default=DEFAULT_PARAMS["num_repeats"])
+    parser.add_argument("--stage1_solver", type=str, choices=["fista", "cvxpy"], default="fista")
     parser.add_argument(
         "--methods",
         type=str,
@@ -260,6 +316,7 @@ def main():
             "d2": args.d2,
             "r": args.r,
             "num_repeats": args.num_repeats,
+            "stage1_solver": args.stage1_solver,
             "methods": [METRIC_TO_ALIAS[metric_key] for metric_key in enabled_metric_keys],
         }
     )
@@ -279,6 +336,7 @@ def main():
         params["Rmax"],
         logger,
         enabled_metric_keys,
+        stage1_solver=args.stage1_solver,
     )
     save_results(all_errors, params["Ns"], args.mode, args.model, params, logger, enabled_metric_keys)
 

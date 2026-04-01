@@ -18,8 +18,8 @@ def plot_data(ax, data, Ns, methods, styles, title, specific_Ns=None):
         cis = data[method]["ci"]
         sorted_indices = np.argsort(Ns)
         sorted_Ns = np.array(Ns)[sorted_indices]
-        sorted_means = np.array(means)[sorted_indices]
-        sorted_cis = np.array(cis)[sorted_indices]
+        sorted_means = np.array(means, dtype=float)[sorted_indices]
+        sorted_cis = np.array(cis, dtype=float)[sorted_indices]
         if specific_Ns is not None:
             mask = np.isin(sorted_Ns, specific_Ns)
             # Fall back to all available Ns when the requested subset is too sparse.
@@ -28,13 +28,30 @@ def plot_data(ax, data, Ns, methods, styles, title, specific_Ns=None):
                 sorted_means = sorted_means[mask]
                 sorted_cis = sorted_cis[mask]
 
-        lower_cis = [ci[0] for ci in sorted_cis]
-        upper_cis = [ci[1] for ci in sorted_cis]
+        lower_cis = sorted_cis[:, 0]
+        upper_cis = sorted_cis[:, 1]
+
+        # Ensure valid CI ordering and non-negative error bars for matplotlib.
+        lower_cis = np.minimum(lower_cis, upper_cis)
+        upper_cis = np.maximum(lower_cis, upper_cis)
+        lower_cis = np.minimum(lower_cis, sorted_means)
+        upper_cis = np.maximum(upper_cis, sorted_means)
+
+        yerr_lower = np.maximum(0.0, sorted_means - lower_cis)
+        yerr_upper = np.maximum(0.0, upper_cis - sorted_means)
+
+        finite_mask = np.isfinite(sorted_Ns) & np.isfinite(sorted_means) & np.isfinite(yerr_lower) & np.isfinite(yerr_upper)
+        sorted_Ns = sorted_Ns[finite_mask]
+        sorted_means = sorted_means[finite_mask]
+        lower_cis = lower_cis[finite_mask]
+        upper_cis = upper_cis[finite_mask]
+        yerr_lower = yerr_lower[finite_mask]
+        yerr_upper = yerr_upper[finite_mask]
 
         ax.errorbar(
             sorted_Ns,
             sorted_means,
-            yerr=[sorted_means - np.array(lower_cis), np.array(upper_cis) - sorted_means],
+            yerr=[yerr_lower, yerr_upper],
             label=label,
             color=styles[method]["color"],
             linestyle=styles[method]["linestyle"],
@@ -43,7 +60,7 @@ def plot_data(ax, data, Ns, methods, styles, title, specific_Ns=None):
             linewidth=2,
             markersize=8,
         )
-        results[method] = {"mean": sorted_means.tolist(), "lower_ci": lower_cis, "upper_ci": upper_cis}
+        results[method] = {"mean": sorted_means.tolist(), "lower_ci": lower_cis.tolist(), "upper_ci": upper_cis.tolist()}
 
     ax.set_xlabel("Sample Size (N)")
     ax.set_ylabel("Nuclear Norm Error")
@@ -58,9 +75,9 @@ def main():
     args = parser.parse_args()
 
     mode_data = load_available_modes("Fig1", args.model)
-    mode_order = [mode for mode in ("completion", "recovery") if mode in mode_data]
+    mode_order = [mode for mode in ("completion", "recovery", "hard") if mode in mode_data]
 
-    methods = {
+    method_labels = {
         "Stage I (no E-optimal)": "U",
         "Stage I (with E-optimal)": "E",
         "Stage I+II (no E, no GL)": "U+U",
@@ -68,11 +85,8 @@ def main():
         "Stage I+II (no E, with GL)": "U+GL",
         "Stage I+II (with E, with GL)": "E+GL",
     }
-    if all("BMF" in mode_data[mode] for mode in mode_order):
-        methods = {"BMF": "BMF-GD", **methods}
-    methods = {method: label for method, label in methods.items() if all(method in mode_data[mode] for mode in mode_order)}
-    if not methods:
-        raise ValueError("No common methods found in available result files to plot.")
+    if any("BMF" in mode_data[mode] for mode in mode_order):
+        method_labels = {"BMF": "BMF-GD", **method_labels}
 
     styles = {
         "Stage I (no E-optimal)": {"color": "#0072B2", "linestyle": "--", "marker": "s"},
@@ -82,7 +96,7 @@ def main():
         "Stage I+II (no E, with GL)": {"color": "#009E73", "linestyle": "--", "marker": "<"},
         "Stage I+II (with E, with GL)": {"color": "#009E73", "linestyle": "-", "marker": ">"},
     }
-    if "BMF" in methods:
+    if "BMF" in method_labels:
         styles["BMF"] = {"color": "#000000", "linestyle": "-", "marker": "o"}
 
     set_style()
@@ -90,16 +104,32 @@ def main():
     if len(mode_order) == 1:
         axes = [axes]
 
-    mode_titles = {"completion": "Matrix Completion", "recovery": "Matrix Recovery"}
+    mode_titles = {
+        "completion": "Matrix Completion",
+        "recovery": "Matrix Recovery",
+        "hard": "Hard Instance",
+    }
     per_mode_results = {}
+    legend_handles = {}
     for ax, mode in zip(axes, mode_order):
         data = mode_data[mode]
         Ns = data["metadata"]["Ns"]
-        per_mode_results[mode] = {"Ns": Ns, "methods": plot_data(ax, data, Ns, methods, styles, mode_titles[mode])}
+        mode_methods = {method: label for method, label in method_labels.items() if method in data}
+        if not mode_methods:
+            raise ValueError(f"No methods available to plot for mode '{mode}'.")
+
+        per_mode_results[mode] = {"Ns": Ns, "methods": plot_data(ax, data, Ns, mode_methods, styles, mode_titles[mode])}
+
+        handles, labels = ax.get_legend_handles_labels()
+        for handle, label in zip(handles, labels):
+            if label not in legend_handles:
+                legend_handles[label] = handle
         # , specific_Ns=[10000, 20000, 30000, 40000, 50000]
 
-    handles, labels = axes[0].get_legend_handles_labels()
-    fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 1.01), ncol=len(methods), frameon=True)
+    if legend_handles:
+        labels = list(legend_handles.keys())
+        handles = [legend_handles[label] for label in labels]
+        fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 1.01), ncol=len(labels), frameon=True)
     plt.tight_layout(rect=(0, 0, 1, 0.96))
     save_outputs("fig1", args.model)
 

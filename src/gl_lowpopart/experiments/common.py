@@ -22,8 +22,8 @@ def run_bmf(env: Any, d1: int, r: int, X1: np.ndarray, y1: np.ndarray) -> float:
     return np.linalg.norm(Theta_BMF - env.Theta_star, "nuc")
 
 
-def run_stage1(env: Any, N: int, d1: int, d2: int, nuc_coef: float, e_optimal: bool):
-    Theta0, X1, y1 = nuc_norm_MLE(env, N, d1, d2, nuc_coef, E_optimal=e_optimal)
+def run_stage1(env: Any, N: int, d1: int, d2: int, nuc_coef: float, e_optimal: bool, stage1_solver: str = "fista"):
+    Theta0, X1, y1 = nuc_norm_MLE(env, N, d1, d2, nuc_coef, E_optimal=e_optimal, stage1_solver=stage1_solver)
     return np.linalg.norm(Theta0 - env.Theta_star, "nuc"), X1, y1
 
 
@@ -38,8 +38,9 @@ def run_stage1_2(
     delta: float,
     e_optimal: bool,
     gl_optimal: bool,
+    stage1_solver: str = "fista",
 ):
-    Theta0, _, _ = nuc_norm_MLE(env, N1, d1, d2, nuc_coef, E_optimal=e_optimal)
+    Theta0, _, _ = nuc_norm_MLE(env, N1, d1, d2, nuc_coef, E_optimal=e_optimal, stage1_solver=stage1_solver)
     Theta = GL_LowPopArt(env, N2, d1, d2, delta, Theta0, c_nu, GL_optimal=gl_optimal)
     return np.linalg.norm(Theta - env.Theta_star, "nuc")
 
