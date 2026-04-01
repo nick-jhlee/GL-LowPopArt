@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-n_repeats=10
+n_repeats=30
 methods="U,U+U,U+GL"
 
 # Run recovery mode

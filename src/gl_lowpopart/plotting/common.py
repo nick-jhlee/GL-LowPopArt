@@ -33,12 +33,12 @@ def load_available_modes(fig: str, model: str):
 def set_style():
     plt.rcParams.update(
         {
-            "font.size": 40,
-            "axes.labelsize": 44,
-            "axes.titlesize": 46,
-            "xtick.labelsize": 32,
-            "ytick.labelsize": 32,
-            "legend.fontsize": 42,
+            "font.size": 46,
+            "axes.labelsize": 50,
+            "axes.titlesize": 52,
+            "xtick.labelsize": 38,
+            "ytick.labelsize": 38,
+            "legend.fontsize": 48,
             "pdf.fonttype": 42,
             "ps.fonttype": 42,
             "svg.fonttype": "none",

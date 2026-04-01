@@ -44,28 +44,3 @@ Run
 ```shell
 $ bash fig1.sh
 ```
-For Poisson experiments, run:
-```shell
-$ PYTHONPATH=src python -m gl_lowpopart.experiments.fig1 --mode completion --model poisson
-$ PYTHONPATH=src python -m gl_lowpopart.experiments.fig1 --mode recovery --model poisson
-$ PYTHONPATH=src python -m gl_lowpopart.plotting.fig1 --model poisson
-```
-
-# Reproducing Figure 2
-Run
-```shell
-$ bash fig2.sh && PYTHONPATH=src python -m gl_lowpopart.plotting.fig2
-```
-For Poisson experiments, run:
-```shell
-$ PYTHONPATH=src python -m gl_lowpopart.experiments.fig2 --mode completion --model poisson
-$ PYTHONPATH=src python -m gl_lowpopart.experiments.fig2 --mode recovery --model poisson
-$ PYTHONPATH=src python -m gl_lowpopart.plotting.fig2 --model poisson
-```
-
-# Output Layout
-All generated artifacts are saved under `results/`:
-- `results/problem_instances/` for cached instances and `Theta_star`
-- `results/logs/` for run logs
-- `results/json/` for experiment JSON outputs
-- `results/figures/` for generated PNG/PDF figures

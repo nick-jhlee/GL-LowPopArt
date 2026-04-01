@@ -5,6 +5,7 @@ import json
 
 import matplotlib.pyplot as plt
 import numpy as np
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes, mark_inset
 from tqdm import tqdm
 
 from gl_lowpopart.config import RESULTS_JSON_DIR
@@ -65,8 +66,70 @@ def plot_data(ax, data, Ns, methods, styles, title, specific_Ns=None):
     ax.set_xlabel("Sample Size (N)")
     ax.set_ylabel("Nuclear Norm Error")
     ax.set_title(title)
+    ax.set_xscale("log")
+    ax.set_yscale("log")
     ax.grid(True, linestyle="--", alpha=0.7)
     return results
+
+
+def add_inset(ax, data, Ns, methods, styles, n_min=1000, n_max=10000):
+    inset_ax = inset_axes(ax, width="40%", height="40%", loc="upper right", borderpad=1.2)
+    subset = [N for N in sorted(set(Ns)) if n_min <= N <= n_max]
+    if len(subset) < 2:
+        return
+
+    for method in methods:
+        means = np.asarray(data[method]["mean"], dtype=float)
+        cis = np.asarray(data[method]["ci"], dtype=float)
+        sorted_indices = np.argsort(Ns)
+        sorted_Ns = np.array(Ns)[sorted_indices]
+        sorted_means = means[sorted_indices]
+        sorted_cis = cis[sorted_indices]
+
+        mask = np.isin(sorted_Ns, subset)
+        if np.count_nonzero(mask) < 2:
+            continue
+
+        sorted_Ns = sorted_Ns[mask]
+        sorted_means = sorted_means[mask]
+        sorted_cis = sorted_cis[mask]
+
+        lower_cis = sorted_cis[:, 0]
+        upper_cis = sorted_cis[:, 1]
+        lower_cis = np.minimum(lower_cis, upper_cis)
+        upper_cis = np.maximum(lower_cis, upper_cis)
+        lower_cis = np.minimum(lower_cis, sorted_means)
+        upper_cis = np.maximum(upper_cis, sorted_means)
+        yerr_lower = np.maximum(0.0, sorted_means - lower_cis)
+        yerr_upper = np.maximum(0.0, upper_cis - sorted_means)
+
+        finite_mask = np.isfinite(sorted_Ns) & np.isfinite(sorted_means) & np.isfinite(yerr_lower) & np.isfinite(yerr_upper)
+        sorted_Ns = sorted_Ns[finite_mask]
+        sorted_means = sorted_means[finite_mask]
+        yerr_lower = yerr_lower[finite_mask]
+        yerr_upper = yerr_upper[finite_mask]
+
+        if len(sorted_Ns) < 2:
+            continue
+
+        inset_ax.errorbar(
+            sorted_Ns,
+            sorted_means,
+            yerr=[yerr_lower, yerr_upper],
+            color=styles[method]["color"],
+            linestyle=styles[method]["linestyle"],
+            marker=styles[method]["marker"],
+            capsize=3,
+            linewidth=1.5,
+            markersize=5,
+            label="_nolegend_",
+        )
+
+    inset_ax.set_xlim(n_min - 20, n_max + 20)
+    inset_ax.set_xticks([n_min, (n_min + n_max) // 2, n_max])
+    inset_ax.tick_params(axis="both", labelsize=12)
+    inset_ax.grid(True, linestyle="--", alpha=0.5)
+    mark_inset(ax, inset_ax, loc1=2, loc2=4, fc="none", ec="0.5", lw=1.0)
 
 
 def main():
@@ -89,11 +152,11 @@ def main():
         method_labels = {"BMF": "BMF-GD", **method_labels}
 
     styles = {
-        "Stage I (no E-optimal)": {"color": "#0072B2", "linestyle": "--", "marker": "s"},
+        "Stage I (no E-optimal)": {"color": "#0072B2", "linestyle": "-", "marker": "s"},
         "Stage I (with E-optimal)": {"color": "#0072B2", "linestyle": "-", "marker": "^"},
-        "Stage I+II (no E, no GL)": {"color": "#E69F00", "linestyle": "--", "marker": "D"},
+        "Stage I+II (no E, no GL)": {"color": "#E69F00", "linestyle": "-", "marker": "D"},
         "Stage I+II (with E, no GL)": {"color": "#E69F00", "linestyle": "-", "marker": "v"},
-        "Stage I+II (no E, with GL)": {"color": "#009E73", "linestyle": "--", "marker": "<"},
+        "Stage I+II (no E, with GL)": {"color": "#009E73", "linestyle": "-", "marker": "<"},
         "Stage I+II (with E, with GL)": {"color": "#009E73", "linestyle": "-", "marker": ">"},
     }
     if "BMF" in method_labels:
@@ -106,8 +169,8 @@ def main():
 
     mode_titles = {
         "completion": "Matrix Completion",
-        "recovery": "Matrix Recovery",
-        "hard": "Hard Instance",
+        "recovery": "Matrix Recovery (Random)",
+        "hard": "Matrix Recovery (Hard)",
     }
     per_mode_results = {}
     legend_handles = {}
@@ -119,6 +182,7 @@ def main():
             raise ValueError(f"No methods available to plot for mode '{mode}'.")
 
         per_mode_results[mode] = {"Ns": Ns, "methods": plot_data(ax, data, Ns, mode_methods, styles, mode_titles[mode])}
+        # add_inset(ax, data, Ns, mode_methods, styles, n_min=100, n_max=1000)
 
         handles, labels = ax.get_legend_handles_labels()
         for handle, label in zip(handles, labels):

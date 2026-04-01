@@ -6,36 +6,21 @@ import warnings
 import numpy as np
 
 from gl_lowpopart.utils import psi_nu
-
-try:
-    import cvxpy as cp
-except ImportError:
-    cp = None
-
-try:
-    import mosek
-except ImportError:
-    mosek = None
+import cvxpy as cp
+import mosek
 
 warnings.filterwarnings("ignore", category=UserWarning, module="mosek")
 warnings.filterwarnings("ignore", category=UserWarning, module="cvxpy")
 
-if mosek is not None:
-    mosek_env = mosek.Env()
-    # Prefer user-level license outside repository.
-    _default_license = os.path.expanduser("~/.mosek/mosek.lic")
-    _license_path = os.environ.get("MOSEKLM_LICENSE_FILE", _default_license)
-    if os.path.exists(_license_path):
-        mosek_env.putlicensepath(_license_path)
-
-
-def _require_cvxpy(feature_name):
-    if cp is None:
-        raise ImportError(f"{feature_name} requires cvxpy to be installed.")
+mosek_env = mosek.Env()
+# Prefer user-level license outside repository.
+_default_license = os.path.expanduser("~/.mosek/mosek.lic")
+_license_path = os.environ.get("MOSEKLM_LICENSE_FILE", _default_license)
+if os.path.exists(_license_path):
+    mosek_env.putlicensepath(_license_path)
 
 
 def E_optimal_design(env):
-    _require_cvxpy("E-optimal design")
     X_arms = env.X_arms
     K = env.K
     pi_E = cp.Variable(K, nonneg=True)
@@ -126,7 +111,6 @@ def _fista_nuclear_mle(X, y, d1, d2, nuc_coef, model, max_iter=500, tol=1e-6):
 
 
 def _cvxpy_nuclear_mle(X, y, d1, d2, nuc_coef, model):
-    _require_cvxpy("Stage-I cvxpy solver")
     Theta = cp.Variable((d1, d2))
     theta = cp.vec(Theta, order="F")
     linear_term = X @ theta
@@ -170,37 +154,45 @@ def nuc_norm_MLE(env, N1, d1, d2, nuc_coef, E_optimal=True, stage1_solver="fista
     return Theta, X1, y1
 
 
-def GL_LowPopArt(env, N2, d1, d2, delta, Theta0, c_nu=1, GL_optimal=True):
+def GL_LowPopArt(env, N2, d1, d2, delta, Theta0, GL_optimal=True):
     X_arms = env.X_arms
     K = env.K
     arm_set = env.arm_set
     d_ = d1 * d2
     theta0 = Theta0.flatten("F")
 
-    log_factor = np.log((d1 + d2) / delta)
-    nu_factor = c_nu * np.sqrt(log_factor)
-
     mu_diags = np.diag([env.dmean_from_eta(tmp) for tmp in X_arms @ theta0])
     mu_diags = np.ascontiguousarray(mu_diags, dtype=np.float64)
 
     if GL_optimal:
-        _require_cvxpy("GL-optimal design")
         pi = cp.Variable(K, nonneg=True)
         mu_diags_cp = cp.Constant(mu_diags)
         H_pi = X_arms.T @ cp.diag(pi) @ mu_diags_cp @ X_arms
         H_inv = cp.Variable((d_, d_), PSD=True)
 
+        # Original (legacy) GL-design objective indexing.
         D_col = cp.Constant(np.zeros((d2, d2)))
         for m in range(d1):
-            # Fixed row m, varying columns.
-            idx_set = [m + l * d1 for l in range(d2)]
+            idx_set = [m * d1 + i for i in range(d1)]
             D_col = D_col + H_inv[np.ix_(idx_set, idx_set)]
 
         D_row = cp.Constant(np.zeros((d1, d1)))
         for m in range(d2):
-            # Fixed column m, varying rows.
-            idx_set = [m * d1 + i for i in range(d1)]
+            idx_set = [m + l * d1 for l in range(d2)]
             D_row = D_row + H_inv[np.ix_(idx_set, idx_set)]
+
+        # Current (correct, Fortran vec-order consistent) version:
+        # D_col = cp.Constant(np.zeros((d2, d2)))
+        # for m in range(d1):
+        #     # Fixed row m, varying columns.
+        #     idx_set = [m + l * d1 for l in range(d2)]
+        #     D_col = D_col + H_inv[np.ix_(idx_set, idx_set)]
+        #
+        # D_row = cp.Constant(np.zeros((d1, d1)))
+        # for m in range(d2):
+        #     # Fixed column m, varying rows.
+        #     idx_set = [m * d1 + i for i in range(d1)]
+        #     D_row = D_row + H_inv[np.ix_(idx_set, idx_set)]
 
         objective = cp.Minimize(cp.maximum(cp.lambda_max(D_col), cp.lambda_max(D_row)))
         prob = cp.Problem(
@@ -218,16 +210,27 @@ def GL_LowPopArt(env, N2, d1, d2, delta, Theta0, c_nu=1, GL_optimal=True):
         pi_optimal = np.ones(K) / K
         H_pi = X_arms.T @ np.diag(pi_optimal) @ mu_diags @ X_arms
         H_inv = np.linalg.inv(H_pi)
+        # Original (legacy) GL-design objective indexing.
         D_col = np.zeros((d2, d2))
         for m in range(d1):
-            # Fixed row m, varying columns.
-            idx_set = [m + l * d1 for l in range(d2)]
+            idx_set = [m * d1 + i for i in range(d1)]
             D_col = D_col + H_inv[np.ix_(idx_set, idx_set)]
         D_row = np.zeros((d1, d1))
         for m in range(d2):
-            # Fixed column m, varying rows.
-            idx_set = [m * d1 + i for i in range(d1)]
+            idx_set = [m + l * d1 for l in range(d2)]
             D_row = D_row + H_inv[np.ix_(idx_set, idx_set)]
+
+        # Current (correct, Fortran vec-order consistent) version:
+        # D_col = np.zeros((d2, d2))
+        # for m in range(d1):
+        #     # Fixed row m, varying columns.
+        #     idx_set = [m + l * d1 for l in range(d2)]
+        #     D_col = D_col + H_inv[np.ix_(idx_set, idx_set)]
+        # D_row = np.zeros((d1, d1))
+        # for m in range(d2):
+        #     # Fixed column m, varying rows.
+        #     idx_set = [m * d1 + i for i in range(d1)]
+        #     D_row = D_row + H_inv[np.ix_(idx_set, idx_set)]
         design_value = max(np.linalg.eigvals(D_col).real.max(), np.linalg.eigvals(D_row).real.max())
 
     H_inv_optimal = np.linalg.inv(X_arms.T @ np.diag(pi_optimal) @ mu_diags @ X_arms)
@@ -239,7 +242,7 @@ def GL_LowPopArt(env, N2, d1, d2, delta, Theta0, c_nu=1, GL_optimal=True):
         X2[i] = arm.flatten("F")
         y2[i] = env.get_reward(arm)
     
-    nu = nu_factor / np.sqrt(design_value * N2)
+    nu = np.sqrt(2 * np.log(4*(d1 + d2) / delta) / (5 * design_value * N2))
     
     # 1. Compute all residuals at once
     residuals = y2 - env.mean_from_eta(X2 @ theta0) # Shape: (N2,)
@@ -255,17 +258,9 @@ def GL_LowPopArt(env, N2, d1, d2, delta, Theta0, c_nu=1, GL_optimal=True):
     Theta_Catoni = np.sum(psi_nu(matrices_batch, nu), axis=0) / N2
     Theta_Catoni += Theta0
 
-    from scipy.sparse.linalg import svds
-
-    # # Compute only the top 1 singular value and vectors
-    # U_k, S_k, Vt_k = svds(Theta_Catoni, k=1)
-    # Theta_final = U_k @ np.diag(S_k) @ Vt_k
     U, S, Vt = np.linalg.svd(Theta_Catoni)
-    tau = np.sqrt(16 * design_value * np.log(4 * (d1 + d2) / delta) / (c_nu * N2))
+    tau = np.sqrt(40 * design_value) * nu
     S_truncated = S * (S > tau).astype(int)
-    # ## hard truncation with r
-    # S_truncated = np.zeros(np.shape(S)[0])
-    # S_truncated[:1] = S[:1]
     Theta_final = U @ np.diag(S_truncated) @ Vt
     return Theta_final
 

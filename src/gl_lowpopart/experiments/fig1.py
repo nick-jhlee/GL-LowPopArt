@@ -89,12 +89,13 @@ def build_results_payload(metric_store, Ns, model, metadata, include_ci=False, e
 
 
 def run_single_repetition(args):
-    run_idx, N, mode, model, d1, d2, r, K, delta, c_lambda, c_nu, Rmax, instance, enabled_metric_keys, stage1_solver = args
+    run_idx, N, mode, model, d1, d2, r, K, delta, c_lambda, Rmax, instance, enabled_metric_keys, stage1_solver = args
     arm_set, Theta_star = instance
     env = build_env(arm_set, Theta_star, model=model)
     enabled_set = set(enabled_metric_keys)
 
-    nuc_coef = np.sqrt(c_lambda * np.log((d1 + d2) / delta) / N)
+    ## Nuclear Penalized MLE
+    nuc_coef = np.sqrt(c_lambda * np.log(2*(d1 + d2) / delta) / N)
     need_stage1_no_e = "error_stage1_no_e" in enabled_set or "error_bmf" in enabled_set
     if need_stage1_no_e:
         error_stage1_no_e, X1, y1 = run_stage1(env, N, d1, d2, nuc_coef, False, stage1_solver=stage1_solver)
@@ -108,9 +109,11 @@ def run_single_repetition(args):
     )
     error_bmf = run_bmf(env, d1, r, X1, y1) if "error_bmf" in enabled_set else np.nan
 
-    N1 = N // 4
+    ## GL-LowPopArt
+    N1 = N // 10
+    # N1 = np.floor(N / 2).astype(int)
     N2 = N - N1
-    nuc_coef = np.sqrt(c_lambda * np.log((d1 + d2) / delta) / N1)
+    nuc_coef = np.sqrt(c_lambda * np.log(4*(d1 + d2) / delta) / N1)
     stage12_flags = {
         "error_stage12_no_e_no_gl": (False, False),
         "error_stage12_no_e_with_gl": (False, True),
@@ -122,7 +125,7 @@ def run_single_repetition(args):
         if metric_key in enabled_set:
             use_e, use_gl = flags
             stage12_results[metric_key] = run_stage1_2(
-                env, N1, N2, d1, d2, nuc_coef, c_nu, delta, use_e, use_gl, stage1_solver=stage1_solver
+                env, N1, N2, d1, d2, nuc_coef, delta, use_e, use_gl, stage1_solver=stage1_solver
             )
         else:
             stage12_results[metric_key] = np.nan
@@ -137,11 +140,11 @@ def run_single_repetition(args):
 
 
 def run_single_sample_size(args):
-    N, mode, model, d1, d2, r, K, delta, c_lambda, c_nu, Rmax, problem_instances, enabled_metric_keys, stage1_solver = args
+    N, mode, model, d1, d2, r, K, delta, c_lambda, Rmax, problem_instances, enabled_metric_keys, stage1_solver = args
     metric_store_reps = empty_metric_store(model, enabled_metric_keys)
     for run_idx, instance in enumerate(problem_instances):
         result = run_single_repetition(
-            (run_idx, N, mode, model, d1, d2, r, K, delta, c_lambda, c_nu, Rmax, instance, enabled_metric_keys, stage1_solver)
+            (run_idx, N, mode, model, d1, d2, r, K, delta, c_lambda, Rmax, instance, enabled_metric_keys, stage1_solver)
         )
         for metric_key in metric_store_reps:
             metric_store_reps[metric_key].append(result[metric_key])
@@ -185,7 +188,7 @@ def cache_matches_run_config(current_results, mode, model, enabled_metric_keys, 
 
 
 def run_experiment(
-    mode, model, d1, d2, r, K, num_repeats, delta, Ns, c_lambda, c_nu, Rmax, logger, enabled_metric_keys, seed=42, stage1_solver="fista"
+    mode, model, d1, d2, r, K, num_repeats, delta, Ns, c_lambda, Rmax, logger, enabled_metric_keys, seed=42, stage1_solver="fista"
 ):
     metric_store_all = empty_metric_store(model, enabled_metric_keys)
     problem_instances = build_problem_instances(mode, model, d1, d2, r, K, num_repeats, seed=seed)
@@ -198,7 +201,6 @@ def run_experiment(
         "num_repeats": num_repeats,
         "delta": delta,
         "c_lambda": c_lambda,
-        "c_nu": c_nu,
         "Rmax": Rmax,
         "stage1_solver": stage1_solver,
     }
@@ -222,7 +224,7 @@ def run_experiment(
     if pending_Ns:
         n_workers = min(len(pending_Ns), max(1, mp.cpu_count() - 1))
         args_list = [
-            (N, mode, model, d1, d2, r, K, delta, c_lambda, c_nu, Rmax, problem_instances, enabled_metric_keys, stage1_solver)
+            (N, mode, model, d1, d2, r, K, delta, c_lambda, Rmax, problem_instances, enabled_metric_keys, stage1_solver)
             for N in pending_Ns
         ]
         with mp.Pool(processes=n_workers) as pool:
@@ -252,7 +254,6 @@ def run_experiment(
                     "num_repeats": num_repeats,
                     "delta": delta,
                     "c_lambda": c_lambda,
-                    "c_nu": c_nu,
                     "Rmax": Rmax,
                     "stage1_solver": stage1_solver,
                 },
@@ -332,7 +333,6 @@ def main():
         params["delta"],
         params["Ns"],
         params["c_lambda"],
-        params["c_nu"],
         params["Rmax"],
         logger,
         enabled_metric_keys,

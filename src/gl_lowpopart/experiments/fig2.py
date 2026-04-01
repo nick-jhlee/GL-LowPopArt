@@ -17,7 +17,7 @@ from gl_lowpopart.utils import mean_t_ci
 
 
 def run_single_repetition(args):
-    run_idx, N, mode, model, d1, d2, r, K, delta, c_lambda, c_nu, Rmax, instance, stage1_solver = args
+    run_idx, N, mode, model, d1, d2, r, K, delta, c_lambda, Rmax, instance, stage1_solver = args
     arm_set, Theta_star = instance
     env = build_env(arm_set, Theta_star, model=model)
 
@@ -61,22 +61,22 @@ def run_single_repetition(args):
 
     if error_uniform is None:
         Theta0_uniform, _, _ = nuc_norm_MLE(env, N1, d1, d2, nuc_coef, E_optimal=False, stage1_solver=stage1_solver)
-        Theta_uniform = GL_LowPopArt(env, N2, d1, d2, delta, Theta0_uniform, c_nu)
+        Theta_uniform = GL_LowPopArt(env, N2, d1, d2, delta, Theta0_uniform)
         error_uniform = float(np.linalg.norm(Theta_uniform - Theta_star, "nuc"))
 
     if error_e_optimal is None:
         Theta0_e_optimal, _, _ = nuc_norm_MLE(env, N1, d1, d2, nuc_coef, E_optimal=True, stage1_solver=stage1_solver)
-        Theta_e_optimal = GL_LowPopArt(env, N2, d1, d2, delta, Theta0_e_optimal, c_nu)
+        Theta_e_optimal = GL_LowPopArt(env, N2, d1, d2, delta, Theta0_e_optimal)
         error_e_optimal = float(np.linalg.norm(Theta_e_optimal - Theta_star, "nuc"))
 
     if error_zero is None:
         Theta0_zero = np.zeros((d1, d2))
-        Theta_zero = GL_LowPopArt(env, N, d1, d2, delta, Theta0_zero, c_nu)
+        Theta_zero = GL_LowPopArt(env, N, d1, d2, delta, Theta0_zero)
         error_zero = float(np.linalg.norm(Theta_zero - Theta_star, "nuc"))
 
     if error_random is None:
         Theta0_random = np.random.randn(d1, d2) * 0.1
-        Theta_random = GL_LowPopArt(env, N, d1, d2, delta, Theta0_random, c_nu)
+        Theta_random = GL_LowPopArt(env, N, d1, d2, delta, Theta0_random)
         error_random = float(np.linalg.norm(Theta_random - Theta_star, "nuc"))
 
     return {
@@ -87,7 +87,7 @@ def run_single_repetition(args):
     }
 
 
-def run_experiment(mode, model, d1, d2, r, K, num_repeats, delta, Ns, c_lambda, c_nu, Rmax, seed=42, stage1_solver="fista"):
+def run_experiment(mode, model, d1, d2, r, K, num_repeats, delta, Ns, c_lambda, Rmax, seed=42, stage1_solver="fista"):
     np.random.seed(seed)
     problem_instances = build_problem_instances(mode, model, d1, d2, r, K, num_repeats, seed=seed)
 
@@ -105,7 +105,6 @@ def run_experiment(mode, model, d1, d2, r, K, num_repeats, delta, Ns, c_lambda, 
         "num_repeats": num_repeats,
         "delta": delta,
         "c_lambda": c_lambda,
-        "c_nu": c_nu,
         "Rmax": Rmax,
         "stage1_solver": stage1_solver,
     }
@@ -139,7 +138,7 @@ def run_experiment(mode, model, d1, d2, r, K, num_repeats, delta, Ns, c_lambda, 
                 pass
 
         args_list = [
-            (run_idx, N, mode, model, d1, d2, r, K, delta, c_lambda, c_nu, Rmax, problem_instances[run_idx], stage1_solver)
+            (run_idx, N, mode, model, d1, d2, r, K, delta, c_lambda, Rmax, problem_instances[run_idx], stage1_solver)
             for run_idx in range(num_repeats)
         ]
 
@@ -195,7 +194,6 @@ def run_experiment(mode, model, d1, d2, r, K, num_repeats, delta, Ns, c_lambda, 
                     "num_repeats": num_repeats,
                     "delta": delta,
                     "c_lambda": c_lambda,
-                    "c_nu": c_nu,
                     "Rmax": Rmax,
                     "stage1_solver": stage1_solver,
                 },
@@ -272,7 +270,6 @@ def main():
         params["delta"],
         params["Ns"],
         params["c_lambda"],
-        params["c_nu"],
         params["Rmax"],
         stage1_solver=args.stage1_solver,
     )

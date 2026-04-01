@@ -34,14 +34,13 @@ def run_stage1_2(
     d1: int,
     d2: int,
     nuc_coef: float,
-    c_nu: float,
     delta: float,
     e_optimal: bool,
     gl_optimal: bool,
     stage1_solver: str = "fista",
 ):
     Theta0, _, _ = nuc_norm_MLE(env, N1, d1, d2, nuc_coef, E_optimal=e_optimal, stage1_solver=stage1_solver)
-    Theta = GL_LowPopArt(env, N2, d1, d2, delta, Theta0, c_nu, GL_optimal=gl_optimal)
+    Theta = GL_LowPopArt(env, N2, d1, d2, delta, Theta0, GL_optimal=gl_optimal)
     return np.linalg.norm(Theta - env.Theta_star, "nuc")
 
 
@@ -51,22 +50,15 @@ def build_problem_instances(
     problem_instances = []
     rng = np.random.RandomState(seed)
 
-    arm_file = f"{model}_{mode}_arm_set.h5"
-    arm_path = os.path.join(PROBLEM_INSTANCES_DIR, arm_file)
-    if os.path.exists(arm_path):
-        arm_set, _ = load_problem_instance(mode, 0, PROBLEM_INSTANCES_DIR, filename=arm_file)
-    else:
-        arm_set = generate_arm_set(d1, d2, K, mode=mode, rng=rng)
-        save_problem_instance(arm_set, np.zeros((d1, d2)), mode, 0, PROBLEM_INSTANCES_DIR, filename=arm_file)
-
     for run_idx in range(num_repeats):
-        theta_file = f"{model}_{mode}_run{run_idx}_theta.h5"
-        theta_path = os.path.join(PROBLEM_INSTANCES_DIR, theta_file)
-        if os.path.exists(theta_path):
-            _, Theta_star = load_problem_instance(mode, run_idx, PROBLEM_INSTANCES_DIR, filename=theta_file)
+        instance_file = f"{model}_{mode}_run{run_idx}_instance.h5"
+        instance_path = os.path.join(PROBLEM_INSTANCES_DIR, instance_file)
+        if os.path.exists(instance_path):
+            arm_set, Theta_star = load_problem_instance(mode, run_idx, PROBLEM_INSTANCES_DIR, filename=instance_file)
         else:
+            arm_set = generate_arm_set(d1, d2, K, mode=mode, rng=rng)
             Theta_star = generate_Theta_star(d1, d2, r, rng=rng)
-            save_problem_instance([], Theta_star, mode, run_idx, PROBLEM_INSTANCES_DIR, filename=theta_file)
+            save_problem_instance(arm_set, Theta_star, mode, run_idx, PROBLEM_INSTANCES_DIR, filename=instance_file)
         problem_instances.append((arm_set, Theta_star))
 
     return problem_instances
