@@ -170,29 +170,18 @@ def GL_LowPopArt(env, N2, d1, d2, delta, Theta0, GL_optimal=True):
         H_pi = X_arms.T @ cp.diag(pi) @ mu_diags_cp @ X_arms
         H_inv = cp.Variable((d_, d_), PSD=True)
 
-        # Original (legacy) GL-design objective indexing.
+        # GL-design objective indexing (Fortran vec-order consistent).
+        # - D_col accumulates blocks indexed by I_m^(row): fixed row m, varying columns -> size d2 x d2
+        # - D_row accumulates blocks indexed by I_m^(col): fixed column m, varying rows -> size d1 x d1
         D_col = cp.Constant(np.zeros((d2, d2)))
         for m in range(d1):
-            idx_set = [m * d1 + i for i in range(d1)]
+            idx_set = [m + l * d1 for l in range(d2)]
             D_col = D_col + H_inv[np.ix_(idx_set, idx_set)]
 
         D_row = cp.Constant(np.zeros((d1, d1)))
         for m in range(d2):
-            idx_set = [m + l * d1 for l in range(d2)]
+            idx_set = [m * d1 + i for i in range(d1)]
             D_row = D_row + H_inv[np.ix_(idx_set, idx_set)]
-
-        # Current (correct, Fortran vec-order consistent) version:
-        # D_col = cp.Constant(np.zeros((d2, d2)))
-        # for m in range(d1):
-        #     # Fixed row m, varying columns.
-        #     idx_set = [m + l * d1 for l in range(d2)]
-        #     D_col = D_col + H_inv[np.ix_(idx_set, idx_set)]
-        #
-        # D_row = cp.Constant(np.zeros((d1, d1)))
-        # for m in range(d2):
-        #     # Fixed column m, varying rows.
-        #     idx_set = [m * d1 + i for i in range(d1)]
-        #     D_row = D_row + H_inv[np.ix_(idx_set, idx_set)]
 
         objective = cp.Minimize(cp.maximum(cp.lambda_max(D_col), cp.lambda_max(D_row)))
         prob = cp.Problem(
@@ -210,27 +199,16 @@ def GL_LowPopArt(env, N2, d1, d2, delta, Theta0, GL_optimal=True):
         pi_optimal = np.ones(K) / K
         H_pi = X_arms.T @ np.diag(pi_optimal) @ mu_diags @ X_arms
         H_inv = np.linalg.inv(H_pi)
-        # Original (legacy) GL-design objective indexing.
+        # GL-design objective indexing (Fortran vec-order consistent).
         D_col = np.zeros((d2, d2))
         for m in range(d1):
-            idx_set = [m * d1 + i for i in range(d1)]
+            idx_set = [m + l * d1 for l in range(d2)]
             D_col = D_col + H_inv[np.ix_(idx_set, idx_set)]
+
         D_row = np.zeros((d1, d1))
         for m in range(d2):
-            idx_set = [m + l * d1 for l in range(d2)]
+            idx_set = [m * d1 + i for i in range(d1)]
             D_row = D_row + H_inv[np.ix_(idx_set, idx_set)]
-
-        # Current (correct, Fortran vec-order consistent) version:
-        # D_col = np.zeros((d2, d2))
-        # for m in range(d1):
-        #     # Fixed row m, varying columns.
-        #     idx_set = [m + l * d1 for l in range(d2)]
-        #     D_col = D_col + H_inv[np.ix_(idx_set, idx_set)]
-        # D_row = np.zeros((d1, d1))
-        # for m in range(d2):
-        #     # Fixed column m, varying rows.
-        #     idx_set = [m * d1 + i for i in range(d1)]
-        #     D_row = D_row + H_inv[np.ix_(idx_set, idx_set)]
         design_value = max(np.linalg.eigvals(D_col).real.max(), np.linalg.eigvals(D_row).real.max())
 
     H_inv_optimal = np.linalg.inv(X_arms.T @ np.diag(pi_optimal) @ mu_diags @ X_arms)
