@@ -12,11 +12,20 @@ from gl_lowpopart.config import RESULTS_JSON_DIR
 from gl_lowpopart.plotting.common import load_available_modes, save_outputs, set_style
 
 
-def plot_data(ax, data, Ns, methods, styles, title, specific_Ns=None):
+def select_metric_entry(method_entry, metric):
+    if metric in method_entry:
+        return method_entry[metric]
+    if metric == "nuc" and "mean" in method_entry:
+        return method_entry
+    raise KeyError(f"Missing '{metric}' metric data. Re-run Figure 1 experiments to generate it.")
+
+
+def plot_data(ax, data, Ns, methods, styles, title, metric, specific_Ns=None):
     results = {}
     for method, label in tqdm(methods.items(), desc="Methods"):
-        means = data[method]["mean"]
-        cis = data[method]["ci"]
+        metric_entry = select_metric_entry(data[method], metric)
+        means = metric_entry["mean"]
+        cis = metric_entry["ci"]
         sorted_indices = np.argsort(Ns)
         sorted_Ns = np.array(Ns)[sorted_indices]
         sorted_means = np.array(means, dtype=float)[sorted_indices]
@@ -64,7 +73,8 @@ def plot_data(ax, data, Ns, methods, styles, title, specific_Ns=None):
         results[method] = {"mean": sorted_means.tolist(), "lower_ci": lower_cis.tolist(), "upper_ci": upper_cis.tolist()}
 
     ax.set_xlabel("Sample Size (N)")
-    ax.set_ylabel("Nuclear Norm Error")
+    y_label = "Nuclear Norm Error" if metric == "nuc" else "Operator Norm Error"
+    ax.set_ylabel(y_label)
     ax.set_title(title)
     ax.set_xscale("log")
     ax.set_yscale("log")
@@ -72,15 +82,16 @@ def plot_data(ax, data, Ns, methods, styles, title, specific_Ns=None):
     return results
 
 
-def add_inset(ax, data, Ns, methods, styles, n_min=1000, n_max=10000):
+def add_inset(ax, data, Ns, methods, styles, metric, n_min=1000, n_max=10000):
     inset_ax = inset_axes(ax, width="40%", height="40%", loc="upper right", borderpad=1.2)
     subset = [N for N in sorted(set(Ns)) if n_min <= N <= n_max]
     if len(subset) < 2:
         return
 
     for method in methods:
-        means = np.asarray(data[method]["mean"], dtype=float)
-        cis = np.asarray(data[method]["ci"], dtype=float)
+        metric_entry = select_metric_entry(data[method], metric)
+        means = np.asarray(metric_entry["mean"], dtype=float)
+        cis = np.asarray(metric_entry["ci"], dtype=float)
         sorted_indices = np.argsort(Ns)
         sorted_Ns = np.array(Ns)[sorted_indices]
         sorted_means = means[sorted_indices]
@@ -132,6 +143,51 @@ def add_inset(ax, data, Ns, methods, styles, n_min=1000, n_max=10000):
     mark_inset(ax, inset_ax, loc1=2, loc2=4, fc="none", ec="0.5", lw=1.0)
 
 
+def render_metric(mode_data, mode_order, method_labels, styles, model, metric):
+    fig, axes = plt.subplots(len(mode_order), 1, figsize=(28, 12 * len(mode_order)))
+    if len(mode_order) == 1:
+        axes = [axes]
+
+    mode_titles = {
+        "completion": "Matrix Completion",
+        "recovery": "Matrix Recovery (Random)",
+        "hard": "Matrix Recovery (Hard)",
+    }
+    per_mode_results = {}
+    legend_handles = {}
+    for ax, mode in zip(axes, mode_order):
+        data = mode_data[mode]
+        Ns = data["metadata"]["Ns"]
+        mode_methods = {method: label for method, label in method_labels.items() if method in data}
+        if not mode_methods:
+            raise ValueError(f"No methods available to plot for mode '{mode}'.")
+
+        per_mode_results[mode] = {
+            "Ns": Ns,
+            "methods": plot_data(ax, data, Ns, mode_methods, styles, mode_titles[mode], metric),
+        }
+        # add_inset(ax, data, Ns, mode_methods, styles, metric, n_min=100, n_max=1000)
+
+        handles, labels = ax.get_legend_handles_labels()
+        for handle, label in zip(handles, labels):
+            if label not in legend_handles:
+                legend_handles[label] = handle
+
+    if legend_handles:
+        labels = list(legend_handles.keys())
+        handles = [legend_handles[label] for label in labels]
+        fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 1.01), ncol=len(labels), frameon=True)
+    plt.tight_layout(rect=(0, 0, 1, 0.96))
+
+    figure_stem = "fig1" if metric == "nuc" else "fig1-op"
+    save_outputs(figure_stem, model)
+
+    suffix = "" if model == "bernoulli" else f"_{model}"
+    results_stem = "fig1_results" if metric == "nuc" else "fig1_results_op"
+    with open(f"{RESULTS_JSON_DIR}/{results_stem}{suffix}.json", "w") as f:
+        json.dump(per_mode_results, f, indent=2)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Plot Figure 1 results")
     parser.add_argument("--model", type=str, choices=["bernoulli", "poisson"], default="bernoulli")
@@ -163,43 +219,8 @@ def main():
         styles["BMF"] = {"color": "#000000", "linestyle": "-", "marker": "o"}
 
     set_style()
-    fig, axes = plt.subplots(len(mode_order), 1, figsize=(28, 12 * len(mode_order)))
-    if len(mode_order) == 1:
-        axes = [axes]
-
-    mode_titles = {
-        "completion": "Matrix Completion",
-        "recovery": "Matrix Recovery (Random)",
-        "hard": "Matrix Recovery (Hard)",
-    }
-    per_mode_results = {}
-    legend_handles = {}
-    for ax, mode in zip(axes, mode_order):
-        data = mode_data[mode]
-        Ns = data["metadata"]["Ns"]
-        mode_methods = {method: label for method, label in method_labels.items() if method in data}
-        if not mode_methods:
-            raise ValueError(f"No methods available to plot for mode '{mode}'.")
-
-        per_mode_results[mode] = {"Ns": Ns, "methods": plot_data(ax, data, Ns, mode_methods, styles, mode_titles[mode])}
-        # add_inset(ax, data, Ns, mode_methods, styles, n_min=100, n_max=1000)
-
-        handles, labels = ax.get_legend_handles_labels()
-        for handle, label in zip(handles, labels):
-            if label not in legend_handles:
-                legend_handles[label] = handle
-        # , specific_Ns=[10000, 20000, 30000, 40000, 50000]
-
-    if legend_handles:
-        labels = list(legend_handles.keys())
-        handles = [legend_handles[label] for label in labels]
-        fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 1.01), ncol=len(labels), frameon=True)
-    plt.tight_layout(rect=(0, 0, 1, 0.96))
-    save_outputs("fig1", args.model)
-
-    suffix = "" if args.model == "bernoulli" else f"_{args.model}"
-    with open(f"{RESULTS_JSON_DIR}/fig1_results{suffix}.json", "w") as f:
-        json.dump(per_mode_results, f, indent=2)
+    for metric in ("nuc", "op"):
+        render_metric(mode_data, mode_order, method_labels, styles, args.model, metric)
 
 
 if __name__ == "__main__":

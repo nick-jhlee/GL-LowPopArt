@@ -11,7 +11,9 @@ import numpy as np
 from tqdm import tqdm
 
 from gl_lowpopart.config import DEFAULT_PARAMS, result_file, setup_logging
-from gl_lowpopart.experiments.common import build_env, build_problem_instances, run_bmf, run_stage1, run_stage1_2
+from gl_lowpopart.core.burer_monteiro import Burer_Monteiro
+from gl_lowpopart.core.optimization import GL_LowPopArt, nuc_norm_MLE
+from gl_lowpopart.experiments.common import build_env, build_problem_instances
 from gl_lowpopart.utils import mean_t_ci
 
 METRIC_SPECS = [
@@ -23,6 +25,7 @@ METRIC_SPECS = [
     ("error_stage12_with_e_with_gl", "Stage I+II (with E, with GL)"),
 ]
 BERNOULLI_ONLY_METRIC = ("error_bmf", "BMF")
+ERROR_NORM_KEYS = ("nuc", "op")
 METHOD_ALIASES = {
     "U": "error_stage1_no_e",
     "E": "error_stage1_with_e",
@@ -45,7 +48,10 @@ def active_metric_specs(model, enabled_metric_keys=None):
 
 
 def empty_metric_store(model, enabled_metric_keys=None):
-    return {metric_key: [] for metric_key, _ in active_metric_specs(model, enabled_metric_keys)}
+    return {
+        metric_key: {norm_key: [] for norm_key in ERROR_NORM_KEYS}
+        for metric_key, _ in active_metric_specs(model, enabled_metric_keys)
+    }
 
 
 def parse_enabled_metric_keys(model, methods_arg):
@@ -69,20 +75,36 @@ def parse_enabled_metric_keys(model, methods_arg):
 
 def append_metrics(target_store, source_store):
     for metric_key in target_store:
-        target_store[metric_key].append(source_store[metric_key])
+        for norm_key in ERROR_NORM_KEYS:
+            target_store[metric_key][norm_key].append(source_store[metric_key][norm_key])
+
+
+def compute_error_metrics(theta_hat, theta_star):
+    diff = theta_hat - theta_star
+    return {
+        "nuc": float(np.linalg.norm(diff, "nuc")),
+        "op": float(np.linalg.norm(diff, ord=2)),
+    }
+
+
+def nan_error_metrics():
+    return {norm_key: np.nan for norm_key in ERROR_NORM_KEYS}
 
 
 def build_results_payload(metric_store, Ns, model, metadata, include_ci=False, enabled_metric_keys=None):
     results = {}
     for metric_key, metric_label in active_metric_specs(model, enabled_metric_keys):
-        metric_data = metric_store[metric_key]
-        means = [float(np.mean(values)) if len(values) > 0 else np.nan for values in metric_data]
-        entry = {
-            "mean": means,
-            "raw": {str(N): metric_data[i] for i, N in enumerate(Ns[: len(metric_data)])},
-        }
-        if include_ci:
-            entry["ci"] = [mean_t_ci(metric_data[i]) for i in range(len(metric_data))]
+        entry = {}
+        for norm_key in ERROR_NORM_KEYS:
+            metric_data = metric_store[metric_key][norm_key]
+            means = [float(np.mean(values)) if len(values) > 0 else np.nan for values in metric_data]
+            norm_entry = {
+                "mean": means,
+                "raw": {str(N): metric_data[i] for i, N in enumerate(Ns[: len(metric_data)])},
+            }
+            if include_ci:
+                norm_entry["ci"] = [mean_t_ci(metric_data[i]) for i in range(len(metric_data))]
+            entry[norm_key] = norm_entry
         results[metric_label] = entry
     results["metadata"] = metadata
     return results
@@ -98,22 +120,32 @@ def run_single_repetition(args):
     nuc_coef = np.sqrt(c_lambda * np.log(2*(d1 + d2) / delta) / N)
     need_stage1_no_e = "error_stage1_no_e" in enabled_set or "error_bmf" in enabled_set
     if need_stage1_no_e:
-        error_stage1_no_e, X1, y1 = run_stage1(env, N, d1, d2, nuc_coef, False, stage1_solver=stage1_solver)
+        theta_stage1_full_no_e, X1, y1 = nuc_norm_MLE(env, N, d1, d2, nuc_coef, E_optimal=False, stage1_solver=stage1_solver)
+        error_stage1_no_e = compute_error_metrics(theta_stage1_full_no_e, Theta_star)
     else:
-        error_stage1_no_e, X1, y1 = np.nan, None, None
+        theta_stage1_full_no_e, X1, y1 = None, None, None
+        error_stage1_no_e = nan_error_metrics()
 
-    error_stage1_with_e = (
-        run_stage1(env, N, d1, d2, nuc_coef, True, stage1_solver=stage1_solver)[0]
-        if "error_stage1_with_e" in enabled_set
-        else np.nan
-    )
-    error_bmf = run_bmf(env, d1, r, X1, y1) if "error_bmf" in enabled_set else np.nan
+    if "error_stage1_with_e" in enabled_set:
+        theta_stage1_full_with_e, _, _ = nuc_norm_MLE(env, N, d1, d2, nuc_coef, E_optimal=True, stage1_solver=stage1_solver)
+        error_stage1_with_e = compute_error_metrics(theta_stage1_full_with_e, Theta_star)
+    else:
+        theta_stage1_full_with_e = None
+        error_stage1_with_e = nan_error_metrics()
+
+    if "error_bmf" in enabled_set:
+        theta_bmf = Burer_Monteiro(d1, r, X1, y1)
+        error_bmf = compute_error_metrics(theta_bmf, Theta_star)
+    else:
+        error_bmf = nan_error_metrics()
 
     ## GL-LowPopArt
     N1 = N // 10
     # N1 = np.floor(N / 2).astype(int)
     N2 = N - N1
     nuc_coef = np.sqrt(c_lambda * np.log(4*(d1 + d2) / delta) / N1)
+    theta_stage12_no_e = None
+    theta_stage12_with_e = None
     stage12_flags = {
         "error_stage12_no_e_no_gl": (False, False),
         "error_stage12_no_e_with_gl": (False, True),
@@ -124,11 +156,22 @@ def run_single_repetition(args):
     for metric_key, flags in stage12_flags.items():
         if metric_key in enabled_set:
             use_e, use_gl = flags
-            stage12_results[metric_key] = run_stage1_2(
-                env, N1, N2, d1, d2, nuc_coef, delta, use_e, use_gl, stage1_solver=stage1_solver
-            )
+            if use_e:
+                if theta_stage12_with_e is None:
+                    theta_stage12_with_e, _, _ = nuc_norm_MLE(
+                        env, N1, d1, d2, nuc_coef, E_optimal=True, stage1_solver=stage1_solver
+                    )
+                theta0 = theta_stage12_with_e
+            else:
+                if theta_stage12_no_e is None:
+                    theta_stage12_no_e, _, _ = nuc_norm_MLE(
+                        env, N1, d1, d2, nuc_coef, E_optimal=False, stage1_solver=stage1_solver
+                    )
+                theta0 = theta_stage12_no_e
+            theta = GL_LowPopArt(env, N2, d1, d2, delta, theta0, GL_optimal=use_gl)
+            stage12_results[metric_key] = compute_error_metrics(theta, Theta_star)
         else:
-            stage12_results[metric_key] = np.nan
+            stage12_results[metric_key] = nan_error_metrics()
 
     results = {
         "error_bmf": error_bmf,
@@ -147,7 +190,8 @@ def run_single_sample_size(args):
             (run_idx, N, mode, model, d1, d2, r, K, delta, c_lambda, Rmax, instance, enabled_metric_keys, stage1_solver)
         )
         for metric_key in metric_store_reps:
-            metric_store_reps[metric_key].append(result[metric_key])
+            for norm_key in ERROR_NORM_KEYS:
+                metric_store_reps[metric_key][norm_key].append(result[metric_key][norm_key])
     return N, metric_store_reps
 
 
@@ -156,15 +200,20 @@ def load_cached_reps(current_results, model, enabled_metric_keys, Ns, N, num_rep
     cached_values = {}
     for metric_key, metric_label in active_metric_specs(model, enabled_metric_keys):
         entry = current_results.get(metric_label)
-        if not entry or "raw" not in entry or "mean" not in entry:
+        if not entry:
             return None
-        if len(entry["mean"]) <= n_idx or str(N) not in entry["raw"]:
-            return None
-        values = entry["raw"][str(N)]
-        values_arr = np.asarray(values, dtype=float)
-        if len(values) != num_repeats or not np.all(np.isfinite(values_arr)):
-            return None
-        cached_values[metric_key] = values
+        cached_values[metric_key] = {}
+        for norm_key in ERROR_NORM_KEYS:
+            norm_entry = entry.get(norm_key)
+            if not norm_entry or "raw" not in norm_entry or "mean" not in norm_entry:
+                return None
+            if len(norm_entry["mean"]) <= n_idx or str(N) not in norm_entry["raw"]:
+                return None
+            values = norm_entry["raw"][str(N)]
+            values_arr = np.asarray(values, dtype=float)
+            if len(values) != num_repeats or not np.all(np.isfinite(values_arr)):
+                return None
+            cached_values[metric_key][norm_key] = values
     return cached_values
 
 

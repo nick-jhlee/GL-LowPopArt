@@ -12,6 +12,13 @@ from gl_lowpopart.config import PROBLEM_INSTANCES_DIR
 from gl_lowpopart.utils import dsigmoid, sigmoid
 
 
+def _normalize_op_norm(arm):
+    op_norm = np.linalg.norm(arm, ord=2)
+    if op_norm <= 1.0:
+        return arm
+    return arm / op_norm
+
+
 class MatrixCompletion:
     def __init__(self, arm_set, Theta_star, model="bernoulli", poisson_clip=10.0):
         self.arm_set = arm_set
@@ -70,6 +77,8 @@ def load_problem_instance(mode, run_idx, save_dir=PROBLEM_INSTANCES_DIR, filenam
         arm_set_array = f["arm_set"][:]
         Theta_star = f["Theta_star"][:]
         arm_set = [arm.reshape(Theta_star.shape, order="F") for arm in arm_set_array]
+    if mode == "hard":
+        arm_set = [_normalize_op_norm(arm) for arm in arm_set]
     return arm_set, Theta_star
 
 
@@ -98,12 +107,12 @@ def generate_arm_set(d1, d2, K, mode="completion", rng=None):
         e1 = np.zeros(d1 * d2)
         e1[0] = 1
         vec_arm = (1 / np.sqrt(d1)) * e1
-        arm_set = [vec_arm.reshape((d1, d2))]
+        arm_set = [_normalize_op_norm(vec_arm.reshape((d1, d2)))]
         for i in range(1, d1 * d2):
             ei = np.zeros(d1 * d2)
             ei[i] = 1
             arm = e1 + (1 / np.sqrt(d1)) * ei
-            arm_set.append(arm.reshape((d1, d2)))
+            arm_set.append(_normalize_op_norm(arm.reshape((d1, d2))))
         return arm_set
 
     raise ValueError(f"Invalid mode: {mode}")
